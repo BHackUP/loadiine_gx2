@@ -35,6 +35,7 @@ MainWindow::MainWindow(int w, int h)
     , mainSwitchButtonFrame(NULL)
     , currentTvFrame(NULL)
     , currentDrcFrame(NULL)
+    , launchingGame(false)
 
 {
     for(int i = 0; i < 4; i++)
@@ -391,6 +392,11 @@ void MainWindow::OnLayoutSwitchClicked(GuiElement *element)
 
 void MainWindow::OnGameLaunch(GuiGameBrowser *element, int gameIdx)
 {
+    if (launchingGame)
+        return;
+
+    launchingGame = true;
+
     CSettings::setValueAsU16(CSettings::GameStartIndex,gameIdx);
 
     if(gameClickSound)
@@ -434,6 +440,9 @@ void MainWindow::OnGameLoadFinish(GameLauncher * launcher, const discHeader *hea
         LOADIINE_MODE = CSettings::getValueAsU8(CSettings::GameLaunchMethod);
 
         Application::instance()->quit();
+    }
+    else {
+        launchingGame = false;
     }
 
     mainSwitchButtonFrame->resetState();

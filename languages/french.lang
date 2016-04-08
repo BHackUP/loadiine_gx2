@@ -1,5 +1,9 @@
 # Loadiine GX2 language source file.
+<<<<<<< HEAD
 # french.lang - v0.1
+=======
+# french.lang - v0.2
+>>>>>>> refs/remotes/dimok789/master
 # don't delete/change this line (é).
 msgid ""
 msgstr ""
@@ -7,8 +11,13 @@ msgstr ""
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2016-04-03 19:00+0200\n"
 "PO-Revision-Date: 2016-04-03 19:00+0200\n"
+<<<<<<< HEAD
 "Last-Translator: BHackUP\n"
 "Language-Team: BHackUP\n"
+=======
+"Last-Translator: BHackUP, littlebalup, Cyan\n"
+"Language-Team: BHackUP, littlebalup, Cyan\n"
+>>>>>>> refs/remotes/dimok789/master
 "Language: Français\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=utf-8\n"
@@ -18,7 +27,11 @@ msgid "Loadiine GX2"
 msgstr ""
 
 msgid "Official Site:"
+<<<<<<< HEAD
 msgstr "Site Officiel:"
+=======
+msgstr "Site officiel:"
+>>>>>>> refs/remotes/dimok789/master
 
 msgid "Coding:"
 msgstr "Développement:"
@@ -33,10 +46,17 @@ msgid "Testing:"
 msgstr "Tests:"
 
 msgid "Cyan / Maschell / n1ghty / OnionKnight and many more"
+<<<<<<< HEAD
 msgstr "Cyan / Maschell / n1ghty / OnionKnight et d'autres"
 
 msgid "Social Presence:"
 msgstr "Présence Sociale:"
+=======
+msgstr "Cyan / Maschell / n1ghty / OnionKnight et bien d'autres"
+
+msgid "Social Presence:"
+msgstr "Présence sociale:"
+>>>>>>> refs/remotes/dimok789/master
 
 msgid "Based on:"
 msgstr "Basé sur:"
@@ -63,12 +83,17 @@ msgid "On"
 msgstr ""
 
 msgid "Icon Carousel"
+<<<<<<< HEAD
 msgstr "Carousel d'Icônes"
+=======
+msgstr "Carrousel d'icônes"
+>>>>>>> refs/remotes/dimok789/master
 
 msgid "Grid View"
 msgstr "Grille"
 
 msgid "Cover Carousel"
+<<<<<<< HEAD
 msgstr "Carousel de Jaquettes"
 
 msgid "Shared Mode"
@@ -76,6 +101,15 @@ msgstr "Mode Partagé"
 
 msgid "Unique Mode"
 msgstr "Mode Unique"
+=======
+msgstr "Carrousel de jaquettes"
+
+msgid "Shared Mode"
+msgstr "Mode partagé"
+
+msgid "Unique Mode"
+msgstr "Mode unique"
+>>>>>>> refs/remotes/dimok789/master
 
 msgid "Mii Maker Mode"
 msgstr "Mode Mii Maker"
@@ -89,14 +123,24 @@ msgstr "Mode Karaoke"
 msgid "Art Atelier Mode"
 msgstr "Mode Art Atelier"
 
+<<<<<<< HEAD
 msgid "Background customizations"
 msgstr "Personnalisation arrière-plan"
+=======
+# translated as nul terminator (hidden), as the option is not implemented yet.
+msgid "Background customizations"
+msgstr "\0"
+>>>>>>> refs/remotes/dimok789/master
 
 msgid "GUI"
 msgstr "Interface"
 
 msgid "Game View Selection"
+<<<<<<< HEAD
 msgstr "Vue de Sélection des Jeux"
+=======
+msgstr "Mode d'affichage des jeux"
+>>>>>>> refs/remotes/dimok789/master
 
 msgid "Customize games path"
 msgstr "Emplacement des jeux"
@@ -105,7 +149,11 @@ msgid "Customize save path"
 msgstr "Emplacement des sauvegardes"
 
 msgid "Loader"
+<<<<<<< HEAD
 msgstr "Chargeur"
+=======
+msgstr ""
+>>>>>>> refs/remotes/dimok789/master
 
 msgid "Set save mode"
 msgstr "Définir le mode de sauvegarde"
@@ -117,7 +165,11 @@ msgid "Game"
 msgstr "Jeu"
 
 msgid "Launch method selection"
+<<<<<<< HEAD
 msgstr "Méthode de lancement"
+=======
+msgstr "Méthode de lancement des jeux"
+>>>>>>> refs/remotes/dimok789/master
 
 msgid "Log server control"
 msgstr "Serveur de log"
@@ -126,6 +178,7 @@ msgid "Credits"
 msgstr "Crédits"
 
 msgid "Credits to all contributors"
+<<<<<<< HEAD
 msgstr "Remerciements à tous les contributeurs"
 
 msgid "Game View TV"
@@ -151,3 +204,30 @@ msgstr "Serveur de Log"
 
 msgid "Log Server IP"
 msgstr "IP Serveur de Log"
+=======
+msgstr "Merci à tous les contributeurs"
+
+msgid "Game View TV"
+msgstr "Affichage des jeux sur TV"
+
+msgid "Game View DRC"
+msgstr "Affichage des jeux sur GamePad"
+
+msgid "Game Path"
+msgstr "Emplacement des jeux"
+
+msgid "Game Save Path"
+msgstr "Emplacement des sauvegardes"
+
+msgid "Game Save Mode"
+msgstr "Mode de sauvegarde"
+
+msgid "Launch Mode"
+msgstr "Mode de lancement"
+
+msgid "Log Server Control"
+msgstr "Activer les logs"
+
+msgid "Log Server IP"
+msgstr "Adresse IP du serveur log"
+>>>>>>> refs/remotes/dimok789/master
