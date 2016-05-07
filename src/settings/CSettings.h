@@ -34,8 +34,10 @@ public:
     }
 
     static void destroyInstance() {
-        delete settingsInstance;
-        settingsInstance = NULL;
+        if(settingsInstance){
+            delete settingsInstance;
+            settingsInstance = NULL;
+        }
     }
 
     //!Set Default Settings
@@ -79,10 +81,11 @@ public:
         GameCover3DPath,
         ConsoleRegionCode,
 		AppLanguage,
-        DebugLoggerIP,
         GameStartIndex,
 		PadconMode,
         LaunchPyGecko,
+        HIDPadEnabled,
+        ShowGameSettings,
         MAX_VALUE
     };
 

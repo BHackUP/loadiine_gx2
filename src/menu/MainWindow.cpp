@@ -21,10 +21,13 @@
 #include "game/GameList.h"
 #include "game/GameLauncher.h"
 #include "menu/SettingsMenu.h"
+#include "menu/GameLauncherMenu.h"
 #include "gui/GuiGameCarousel.h"
 #include "gui/GuiIconCarousel.h"
 #include "gui/GuiIconGrid.h"
 #include "settings/CSettings.h"
+#include "settings/CSettingsGame.h"
+#include "common/retain_vars.h"
 #include "utils/StringTools.h"
 #include "utils/logger.h"
 
@@ -247,13 +250,15 @@ void MainWindow::SetupMainView()
     currentTvFrame->gameLaunchClicked.disconnect(this);
     currentDrcFrame->gameLaunchClicked.disconnect(this);
 
-    if(currentTvFrame != currentDrcFrame) // Only connected when they are the same!
+
+    if(currentTvFrame != currentDrcFrame)
     {
         currentTvFrame->gameSelectionChanged.connect(this, &MainWindow::OnGameSelectionChange);
-        currentTvFrame->gameLaunchClicked.connect(this, &MainWindow::OnGameLaunch);
+        currentTvFrame->gameLaunchClicked.connect(this, &MainWindow::OnGameLaunchMenu);
     }
+
     currentDrcFrame->gameSelectionChanged.connect(this, &MainWindow::OnGameSelectionChange);
-    currentDrcFrame->gameLaunchClicked.connect(this, &MainWindow::OnGameLaunch);
+    currentDrcFrame->gameLaunchClicked.connect(this, &MainWindow::OnGameLaunchMenu);
 
     mainSwitchButtonFrame = new MainDrcButtonsFrame(width, height);
     mainSwitchButtonFrame->settingsButtonClicked.connect(this, &MainWindow::OnSettingsButtonClicked);
@@ -353,7 +358,7 @@ void MainWindow::OnLayoutSwitchEffectFinish(GuiElement *element)
     currentDrcFrame->resetState();
     currentDrcFrame->setEffect(EFFECT_FADE, 15, 255);
 
-    mainSwitchButtonFrame->resetState();
+    mainSwitchButtonFrame->clearState(GuiElement::STATE_DISABLED);
 
     //! reconnect only to DRC game selection change
     currentTvFrame->gameSelectionChanged.disconnect(this);
@@ -362,9 +367,9 @@ void MainWindow::OnLayoutSwitchEffectFinish(GuiElement *element)
     currentDrcFrame->gameLaunchClicked.disconnect(this);
 
     currentTvFrame->gameSelectionChanged.connect(this, &MainWindow::OnGameSelectionChange);
-    currentTvFrame->gameLaunchClicked.connect(this, &MainWindow::OnGameLaunch);
+    currentTvFrame->gameLaunchClicked.connect(this, &MainWindow::OnGameLaunchMenu);
     currentDrcFrame->gameSelectionChanged.connect(this, &MainWindow::OnGameSelectionChange);
-    currentDrcFrame->gameLaunchClicked.connect(this, &MainWindow::OnGameLaunch);
+    currentDrcFrame->gameLaunchClicked.connect(this, &MainWindow::OnGameLaunchMenu);
 
     u8 tmpMode = CSettings::getValueAsU8(CSettings::GameViewModeDrc);
 
@@ -390,19 +395,86 @@ void MainWindow::OnLayoutSwitchClicked(GuiElement *element)
     mainSwitchButtonFrame->setState(GuiElement::STATE_DISABLED);
 }
 
-void MainWindow::OnGameLaunch(GuiGameBrowser *element, int gameIdx)
+void MainWindow::OnGameLaunchMenu(GuiGameBrowser *element, int gameIdx)
 {
+    if(GameList::instance()->size() == 0)
+        return;
+
     if (launchingGame)
         return;
 
     launchingGame = true;
 
+    mainSwitchButtonFrame->setState(GuiElement::STATE_DISABLED);
+    currentTvFrame->setState(GuiElement::STATE_DISABLED);
+    if(currentTvFrame != currentDrcFrame)
+    {
+        currentDrcFrame->setState(GuiElement::STATE_DISABLED);
+    }
+
+    if(CSettings::getValueAsU8(CSettings::ShowGameSettings) == SETTING_ON)
+    {
+        GameLauncherMenu * gameSettings = new GameLauncherMenu(gameIdx);
+        gameSettings->setEffect(EFFECT_FADE, 10, 255);
+        gameSettings->setState(GuiElement::STATE_DISABLED);
+        gameSettings->effectFinished.connect(this, &MainWindow::OnOpenEffectFinish);
+        gameSettings->gameLauncherMenuQuitClicked.connect(this, &MainWindow::OnGameLaunchMenuFinish);
+        gameSettings->gameLauncherGetHeaderClicked.connect(this, &MainWindow::OnGameLaunchGetHeader);
+        append(gameSettings);
+    }
+    else
+    {
+        OnGameLaunchMenuFinish(NULL, GameList::instance()->at(gameIdx), true);
+    }
+}
+
+void MainWindow::OnGameLaunchGetHeader(GuiElement *element,int gameIdx, int next)
+{
+    if(next == 1){
+        gameIdx += 1;
+    }else if (next == -1){
+        gameIdx -= 1;
+    }
+    if(gameIdx >= GameList::instance()->size()){
+        gameIdx = 0;
+    }else if(gameIdx < 0){
+        gameIdx = GameList::instance()->size() -1;
+    }
+
     CSettings::setValueAsU16(CSettings::GameStartIndex,gameIdx);
 
+    OnExternalGameSelectionChange(gameIdx);
+    gameLauncherMenuNextClicked(element,gameIdx);
+}
+
+void MainWindow::OnGameLaunchMenuFinish(GuiElement *element,const discHeader *header, bool result)
+{
+    mainSwitchButtonFrame->clearState(GuiElement::STATE_DISABLED);
+    currentTvFrame->clearState(GuiElement::STATE_DISABLED);
+    if(currentTvFrame != currentDrcFrame)
+    {
+        currentDrcFrame->clearState(GuiElement::STATE_DISABLED);
+    }
+
+    if(element)
+    {
+        element->setState(GuiElement::STATE_DISABLED);
+        element->setEffect(EFFECT_FADE, -15, 0);
+        element->effectFinished.connect(this, &MainWindow::OnCloseEffectFinish);
+    }
+
+    if(result == true){
+        OnGameLaunch(header);
+    }
+    else {
+        launchingGame = false;
+    }
+}
+
+void MainWindow::OnGameLaunch(const discHeader *gameHdr)
+{
     if(gameClickSound)
         gameClickSound->Play();
-
-    const discHeader *gameHdr = GameList::instance()->at(gameIdx);
 
     log_printf("Loading game %s\n", gameHdr->name.c_str());
 
@@ -415,8 +487,6 @@ void MainWindow::OnGameLaunch(GuiGameBrowser *element, int gameIdx)
 
 void MainWindow::OnGameLoadFinish(GameLauncher * launcher, const discHeader *header, int result)
 {
-    log_printf("game loading result %i\n", result);
-
     if(result == GameLauncher::SUCCESS)
     {
         // Set game launched
@@ -436,9 +506,43 @@ void MainWindow::OnGameLoadFinish(GameLauncher * launcher, const discHeader *hea
         SERVER_IP = ip.s_addr;
         GAME_LAUNCHED = 1;
         GAME_RPX_LOADED = 0;
-        LAUNCH_PYGECKO = CSettings::getValueAsU8(CSettings::LaunchPyGecko);
         LOADIINE_MODE = CSettings::getValueAsU8(CSettings::GameLaunchMethod);
+        gSettingLaunchPyGecko = CSettings::getValueAsU8(CSettings::LaunchPyGecko);
+        gSettingPadconMode= CSettings::getValueAsU8(CSettings::PadconMode);
+        //! load HID settings
+        gHIDPADEnabled = CSettings::getValueAsU8(CSettings::HIDPadEnabled);
+        gEnableDLC = 0;
 
+		GameSettings gs;
+		bool result = CSettingsGame::getInstance()->LoadGameSettings(header->id,gs);
+		if(result){
+			switch(gs.launch_method){
+				case LOADIINE_MODE_DEFAULT:
+					log_printf("Using launch method from Settings\n");
+					break; //leave it from settings
+				case LOADIINE_MODE_MII_MAKER:
+					log_printf("Using Mii Maker cfg\n");
+					LOADIINE_MODE = LOADIINE_MODE_MII_MAKER;
+					break;
+				case LOADIINE_MODE_SMASH_BROS:
+					log_printf("Using Super Smash Bros cfg\n");
+					LOADIINE_MODE = LOADIINE_MODE_SMASH_BROS;
+					break;
+				case LOADIINE_MODE_KARAOKE:
+					log_printf("Using KARAOKE BY U Joysound cfg\n");
+					LOADIINE_MODE = LOADIINE_MODE_KARAOKE;
+					break;
+				case LOADIINE_MODE_ART_ATELIER:
+					log_printf("Using Art Academy Atelier cfg\n");
+					LOADIINE_MODE = LOADIINE_MODE_ART_ATELIER;
+					break;
+				default:
+					log_printf("No valid value found. Using launch method from settings\n");
+					break;
+			}
+
+			gEnableDLC = gs.EnableDLC;
+		}
         Application::instance()->quit();
     }
     else {
@@ -465,6 +569,15 @@ void MainWindow::OnGameSelectionChange(GuiGameBrowser *element, int selectedIdx)
         currentTvFrame->setSelectedGame(selectedIdx);
     else if(element == currentTvFrame && currentDrcFrame != currentTvFrame)
         currentDrcFrame->setSelectedGame(selectedIdx);
+}
+
+void MainWindow::OnExternalGameSelectionChange(int selectedIdx)
+{
+    currentTvFrame->setSelectedGame(selectedIdx);
+    if(currentDrcFrame != currentTvFrame)
+    {
+        currentDrcFrame->setSelectedGame(selectedIdx);
+    }
 }
 
 void MainWindow::OnImageDownloadClicked(GuiElement *element)

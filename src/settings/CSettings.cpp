@@ -105,14 +105,10 @@ void CSettings::SetDefault()
     settingsNames[ConsoleRegionCode] = "ConsoleRegionCode";
     settingsValues[ConsoleRegionCode].dataType = TypeString;
     settingsValues[ConsoleRegionCode].strValue = new std::string("EN");
-	
+
 	settingsNames[AppLanguage] = "AppLanguage";
     settingsValues[AppLanguage].dataType = TypeString;
     settingsValues[AppLanguage].strValue = new std::string();
-
-    settingsNames[DebugLoggerIP] = "DebugLoggerIP";
-    settingsValues[DebugLoggerIP].dataType = TypeString;
-    settingsValues[DebugLoggerIP].strValue = new std::string("192.168.178.3");
 
     settingsNames[GameStartIndex] = "GameStartIndex";
     settingsValues[GameStartIndex].dataType = TypeU16;
@@ -120,11 +116,19 @@ void CSettings::SetDefault()
 
 	settingsNames[PadconMode] = "PadconMode";
     settingsValues[PadconMode].dataType = TypeU8;
-    settingsValues[PadconMode].ucValue = PADCON_DISABLED;
+    settingsValues[PadconMode].ucValue = SETTING_OFF;
 
     settingsNames[LaunchPyGecko] = "LaunchPyGecko";
     settingsValues[LaunchPyGecko].dataType = TypeU8;
-    settingsValues[LaunchPyGecko].ucValue = 0;
+    settingsValues[LaunchPyGecko].ucValue = SETTING_OFF;
+
+    settingsNames[HIDPadEnabled] = "HIDPadUse";
+    settingsValues[HIDPadEnabled].dataType = TypeU8;
+    settingsValues[HIDPadEnabled].ucValue = SETTING_OFF;
+
+    settingsNames[ShowGameSettings] = "ShowGameSettings";
+    settingsValues[ShowGameSettings].dataType = TypeU8;
+    settingsValues[ShowGameSettings].ucValue = SETTING_ON;
 
 }
 
@@ -132,11 +136,11 @@ bool CSettings::Load()
 {
 	//! Reset default path variables to the right device
 	SetDefault();
-	
-	
+
+
 	std::string filepath = configPath;
 	filepath += "/loadiine_gx2.cfg";
-  
+
 	CFile file(filepath, CFile::ReadOnly);
 	if (!file.isOpen())
         return false;
@@ -253,10 +257,10 @@ bool CSettings::Save()
         return true;
 
     CreateSubfolder(configPath.c_str());
-	
+
 	std::string filepath = configPath;
 	filepath += "/loadiine_gx2.cfg";
-    
+
 	CFile file(filepath, CFile::WriteOnly);
 	if (!file.isOpen())
         return false;

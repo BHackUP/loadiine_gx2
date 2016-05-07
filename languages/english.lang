@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Loadiine GX2\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2016-04-03 11:40+0200\n"
+"POT-Creation-Date: 2016-05-07 01:41+0200\n"
 "PO-Revision-Date: 2009-10-01 01:00+0200\n"
 "Last-Translator: \n"
 "Language-Team: \n"
@@ -56,6 +56,27 @@ msgstr ""
 msgid "The whole libwiiu team and it's contributors."
 msgstr ""
 
+msgid "Extra Save:"
+msgstr ""
+
+msgid "Enable DLC Support:"
+msgstr ""
+
+msgid "Update Folder"
+msgstr ""
+
+msgid "Save Mode"
+msgstr ""
+
+msgid "Launch Mode"
+msgstr ""
+
+msgid "<Settings Default>"
+msgstr ""
+
+msgid "Saving game settings!"
+msgstr ""
+
 msgid "Off"
 msgstr ""
 
@@ -69,6 +90,87 @@ msgid "Grid View"
 msgstr ""
 
 msgid "Cover Carousel"
+msgstr ""
+
+msgid "Background customizations"
+msgstr ""
+
+msgid "GUI"
+msgstr ""
+
+msgid "Game View Selection"
+msgstr ""
+
+msgid "Adjust log server IP and port"
+msgstr ""
+
+msgid "Customize games path"
+msgstr ""
+
+msgid "Customize save path"
+msgstr ""
+
+msgid "Loader"
+msgstr ""
+
+msgid "Set save mode"
+msgstr ""
+
+msgid "Game"
+msgstr ""
+
+msgid "HID settings"
+msgstr ""
+
+msgid "Launch method selection"
+msgstr ""
+
+msgid "Log server control"
+msgstr ""
+
+msgid "Padcon settings"
+msgstr ""
+
+msgid "PyGecko settings"
+msgstr ""
+
+msgid "Credits"
+msgstr ""
+
+msgid "Credits to all contributors"
+msgstr ""
+
+msgid "Game View TV"
+msgstr ""
+
+msgid "Game View DRC"
+msgstr ""
+
+msgid "Show Game Settings"
+msgstr ""
+
+msgid "Host IP"
+msgstr ""
+
+msgid "Game Path"
+msgstr ""
+
+msgid "Game Save Path"
+msgstr ""
+
+msgid "Game Save Mode"
+msgstr ""
+
+msgid "Log Server Control"
+msgstr ""
+
+msgid "PyGecko"
+msgstr ""
+
+msgid "Padcon"
+msgstr ""
+
+msgid "HID-Pad"
 msgstr ""
 
 msgid "Shared Mode"
@@ -87,67 +189,4 @@ msgid "Karaoke Mode"
 msgstr ""
 
 msgid "Art Atelier Mode"
-msgstr ""
-
-msgid "Background customizations"
-msgstr ""
-
-msgid "GUI"
-msgstr ""
-
-msgid "Game View Selection"
-msgstr ""
-
-msgid "Customize games path"
-msgstr ""
-
-msgid "Customize save path"
-msgstr ""
-
-msgid "Loader"
-msgstr ""
-
-msgid "Set save mode"
-msgstr ""
-
-msgid "Adjust log server IP and port"
-msgstr ""
-
-msgid "Game"
-msgstr ""
-
-msgid "Launch method selection"
-msgstr ""
-
-msgid "Log server control"
-msgstr ""
-
-msgid "Credits"
-msgstr ""
-
-msgid "Credits to all contributors"
-msgstr ""
-
-msgid "Game View TV"
-msgstr ""
-
-msgid "Game View DRC"
-msgstr ""
-
-msgid "Game Path"
-msgstr ""
-
-msgid "Game Save Path"
-msgstr ""
-
-msgid "Game Save Mode"
-msgstr ""
-
-msgid "Launch Mode"
-msgstr ""
-
-msgid "Log Server Control"
-msgstr ""
-
-msgid "Log Server IP"
 msgstr ""

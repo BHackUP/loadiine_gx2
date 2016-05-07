@@ -39,20 +39,6 @@ static const ValueString ValueGameViewMode[] =
     { 2, trNOOP("Cover Carousel") }
 };
 
-static const ValueString ValueGameSaveModes[] =
-{
-    { GAME_SAVES_SHARED, trNOOP("Shared Mode") },
-    { GAME_SAVES_UNIQUE, trNOOP("Unique Mode") },
-};
-
-static ValueString ValueLaunchMode[] =
-{
-    { LOADIINE_MODE_MII_MAKER, trNOOP("Mii Maker Mode") },
-    { LOADIINE_MODE_SMASH_BROS, trNOOP("Smash Bros Mode") },
-    { LOADIINE_MODE_KARAOKE, trNOOP("Karaoke Mode") },
-    { LOADIINE_MODE_ART_ATELIER, trNOOP("Art Atelier Mode") }
-};
-
 static const struct
 {
     const char *name;
@@ -63,8 +49,8 @@ static const struct
 stSettingsCategories[] =
 {
     { trNOOP("GUI"),     "guiSettingsIcon.png",    "guiSettingsIconGlow.png",    trNOOP("Game View Selection") "\n" trNOOP("Background customizations") },
-    { trNOOP("Loader"),  "loaderSettingsIcon.png", "loaderSettingsIconGlow.png", trNOOP("Customize games path") "\n" trNOOP("Customize save path") "\n" trNOOP("Set save mode") },
-    { trNOOP("Game"),    "gameSettingsIcon.png",   "gameSettingsIconGlow.png",   trNOOP("Launch method selection") "\n" trNOOP("Log server control") "\n" trNOOP("Adjust log server IP and port") },
+    { trNOOP("Loader"),  "loaderSettingsIcon.png", "loaderSettingsIconGlow.png", trNOOP("Customize games path") "\n" trNOOP("Customize save path") "\n" trNOOP("Set save mode") "\n" trNOOP("Adjust log server IP and port") },
+    { trNOOP("Game"),    "gameSettingsIcon.png",   "gameSettingsIconGlow.png",   trNOOP("Launch method selection") "\n" trNOOP("Log server control") "\n"  "\n" trNOOP("PyGecko settings") "\n" trNOOP("Padcon settings") "\n" trNOOP("HID settings")},
     { trNOOP("Credits"), "creditsIcon.png",        "creditsIconGlow.png",        trNOOP("Credits to all contributors") }
 };
 
@@ -76,6 +62,8 @@ static const SettingType GuiSettings[] =
 
 static const SettingType LoaderSettings[] =
 {
+    { trNOOP("Show Game Settings"), ValueOnOff, Type2Buttons, CSettings::ShowGameSettings },
+    { trNOOP("Host IP"), 0, TypeIP, CSettings::GameLogServerIp },
     { trNOOP("Game Path"), 0, TypeDisplayOnly, CSettings::GamePath },
     { trNOOP("Game Save Path"), 0, TypeDisplayOnly, CSettings::GameSavePath },
     { trNOOP("Game Save Mode"), ValueGameSaveModes, Type2Buttons, CSettings::GameSaveMode }
@@ -85,7 +73,9 @@ static const SettingType GameSettings[] =
 {
     { trNOOP("Launch Mode"), ValueLaunchMode, Type4Buttons, CSettings::GameLaunchMethod },
     { trNOOP("Log Server Control"), ValueOnOff, Type2Buttons, CSettings::GameLogServer },
-    { trNOOP("Log Server IP"), 0, TypeIP, CSettings::GameLogServerIp }
+    { trNOOP("PyGecko"), ValueOnOff, Type2Buttons, CSettings::LaunchPyGecko },
+    { trNOOP("Padcon"), ValueOnOff, Type2Buttons, CSettings::PadconMode },
+    { trNOOP("HID-Pad"), ValueOnOff, Type2Buttons, CSettings::HIDPadEnabled }
 };
 
 SettingsMenu::SettingsMenu(int w, int h)
@@ -227,8 +217,6 @@ SettingsMenu::SettingsMenu(int w, int h)
     rightArrowButton.setSoundClick(buttonClickSound);
     rightArrowButton.clicked.connect(this, &SettingsMenu::OnCategoryRightClick);
     categorySelectionFrame.append(&rightArrowButton);
-
-
 
     DPADButtons.setTrigger(&buttonATrigger);
     DPADButtons.setTrigger(&buttonBTrigger);

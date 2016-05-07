@@ -62,32 +62,3 @@ void SetupKernelCallback(void)
 {
     KernelSetupSyscalls();
 }
-
-void KernelSetDBATs(bat_table_t * table)
-{
-    SC0x36_KernelReadDBATs(table);
-    bat_table_t bat_table_copy = *table;
-
-    // try to use a free slot
-    int iUse;
-    for(iUse = 0; iUse < 7; iUse++)
-    {
-        // skip position 5 as it is our main DBAT for our code data
-        if(iUse == 5)
-            continue;
-
-        if(bat_table_copy.bat[iUse].h == 0 || bat_table_copy.bat[iUse].l == 0)
-        {
-            break;
-        }
-    }
-
-    bat_table_copy.bat[iUse].h = 0xC0001FFF;
-    bat_table_copy.bat[iUse].l = 0x30000012;
-    SC0x37_KernelWriteDBATs(&bat_table_copy);
-}
-
-void KernelRestoreDBATs(bat_table_t * table)
-{
-    SC0x37_KernelWriteDBATs(table);
-}

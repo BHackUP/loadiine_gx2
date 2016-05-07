@@ -17,14 +17,18 @@
 #include "Application.h"
 #include "dynamic_libs/os_functions.h"
 #include "gui/FreeTypeGX.h"
+#include "gui/GuiImageAsync.h"
 #include "gui/VPadController.h"
 #include "gui/WPadController.h"
 #include "game/GameList.h"
 #include "resources/Resources.h"
 #include "settings/CSettings.h"
+#include "settings/CSettingsGame.h"
 #include "sounds/SoundHandler.hpp"
 #include "system/exception_handler.h"
 #include "utils/logger.h"
+#include "common/retain_vars.h"
+#include "controller_patcher/cp_retain_vars.h"
 
 Application *Application::applicationInstance = NULL;
 bool Application::exitApplication = false;
@@ -41,9 +45,14 @@ Application::Application()
     controller[3] = new WPadController(GuiTrigger::CHANNEL_4);
     controller[4] = new WPadController(GuiTrigger::CHANNEL_5);
 
+    CSettings::instance()->Load();
+
     //! reload logger to change IP to settings IP
     log_deinit();
-    log_init(CSettings::getValueAsString(CSettings::DebugLoggerIP).c_str());
+    log_init(CSettings::getValueAsString(CSettings::GameLogServerIp).c_str());
+
+    //! load HID settings
+    gHIDPADEnabled = CSettings::getValueAsU8(CSettings::HIDPadEnabled);
 
     //! load resources
     Resources::LoadFiles("sd:/wiiu/apps/loadiine_gx2/resources");
@@ -75,17 +84,27 @@ Application::~Application()
 {
     GameList::destroyInstance();
 
+    CSettings::instance()->Save();
+    CSettings::destroyInstance();
+
+	CSettingsGame::destroyInstance();
+
     delete bgMusic;
 
     for(int i = 0; i < 5; i++)
         delete controller[i];
 
 	AsyncDeleter::destroyInstance();
+    GuiImageAsync::threadExit();
     Resources::Clear();
 
 	SoundHandler::DestroyInstance();
 
 	gettextCleanUp();
+
+	if(!gHIDPADEnabled && config_done){
+        deinit_config_controller(); //Needs InitSysHIDFunctionPointers();! here done by init_config_controller() when config_done is set.
+    }
 }
 
 void Application::exec()
@@ -171,6 +190,7 @@ void Application::executeThread(void)
     //! main GX2 loop (60 Hz cycle with max priority on core 1)
 	while(!exitApplication)
 	{
+	    mainWindow->lockGUI();
 	    //! Read out inputs
 	    for(int i = 0; i < 5; i++)
         {
@@ -202,6 +222,7 @@ void Application::executeThread(void)
 
 	    //! as last point update the effects as it can drop elements
 	    mainWindow->updateEffects();
+	    mainWindow->unlockGUI();
 
 	    video->waitForVSync();
 

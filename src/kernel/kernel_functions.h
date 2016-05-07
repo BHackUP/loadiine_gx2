@@ -10,8 +10,7 @@ extern "C" {
 
 void SetupKernelCallback(void);
 
-void KernelSetDBATs(bat_table_t * table);
-void KernelRestoreDBATs(bat_table_t * table);
+extern ReducedCosAppXmlInfo cosAppXmlInfoStruct;
 
 #ifdef __cplusplus
 }

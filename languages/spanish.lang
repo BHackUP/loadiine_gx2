@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Loadiine GX2\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2016-04-03 11:40+0200\n"
+"POT-Creation-Date: 2016-05-07 01:41+0200\n"
 "PO-Revision-Date: 2016-04-02 07:28+0200\n"
 "Last-Translator: MasQchips\n"
 "Language-Team: MasQchips\n"
@@ -56,6 +56,27 @@ msgstr "Marionumber1 por su kernel exploit"
 msgid "The whole libwiiu team and it's contributors."
 msgstr "Todo el equipo de libwiiu y sus colaboradores."
 
+msgid "Extra Save:"
+msgstr ""
+
+msgid "Enable DLC Support:"
+msgstr ""
+
+msgid "Update Folder"
+msgstr "Actualizar Carpeta"
+
+msgid "Save Mode"
+msgstr "Modo de Guardado"
+
+msgid "Launch Mode"
+msgstr "Modo de Carga"
+
+msgid "<Settings Default>"
+msgstr "<Ajustes por Defecto>"
+
+msgid "Saving game settings!"
+msgstr "Guardando ajustes del juego!"
+
 msgid "Off"
 msgstr "Apagado"
 
@@ -70,6 +91,87 @@ msgstr "Vista de Rejilla"
 
 msgid "Cover Carousel"
 msgstr "Carrusel de Caratulas"
+
+msgid "Background customizations"
+msgstr "Personalización del fondo"
+
+msgid "GUI"
+msgstr ""
+
+msgid "Game View Selection"
+msgstr "Vista de selección del juego"
+
+msgid "Adjust log server IP and port"
+msgstr "Ajustar IP y puerto del servidor"
+
+msgid "Customize games path"
+msgstr "Personalizar ruta del juego"
+
+msgid "Customize save path"
+msgstr "Personalizar ruta de guardado"
+
+msgid "Loader"
+msgstr "Cargador"
+
+msgid "Set save mode"
+msgstr "Establecer modo de guardado"
+
+msgid "Game"
+msgstr "Juego"
+
+msgid "HID settings"
+msgstr ""
+
+msgid "Launch method selection"
+msgstr "Seleccionar metodo de carga"
+
+msgid "Log server control"
+msgstr "Iniciar servidor"
+
+msgid "Padcon settings"
+msgstr ""
+
+msgid "PyGecko settings"
+msgstr ""
+
+msgid "Credits"
+msgstr "Creditos"
+
+msgid "Credits to all contributors"
+msgstr "Créditos de los colaboladores"
+
+msgid "Game View TV"
+msgstr "Vista del Juego TV"
+
+msgid "Game View DRC"
+msgstr "Vista del Juego DRC"
+
+msgid "Show Game Settings"
+msgstr ""
+
+msgid "Host IP"
+msgstr ""
+
+msgid "Game Path"
+msgstr "Ruta del Juego"
+
+msgid "Game Save Path"
+msgstr "Ruta de guardado"
+
+msgid "Game Save Mode"
+msgstr "Modo de Guardado"
+
+msgid "Log Server Control"
+msgstr "Control de Registros"
+
+msgid "PyGecko"
+msgstr ""
+
+msgid "Padcon"
+msgstr ""
+
+msgid "HID-Pad"
+msgstr ""
 
 msgid "Shared Mode"
 msgstr "Modo Compartido"
@@ -89,65 +191,5 @@ msgstr "Modo Karaoke"
 msgid "Art Atelier Mode"
 msgstr "Modo Art Atelier"
 
-msgid "Background customizations"
-msgstr "Personalización del fondo"
-
-msgid "GUI"
-msgstr ""
-
-msgid "Game View Selection"
-msgstr "Vista de selección del juego"
-
-msgid "Customize games path"
-msgstr "Personalizar ruta del juego"
-
-msgid "Customize save path"
-msgstr "Personalizar ruta de guardado"
-
-msgid "Loader"
-msgstr "Cargador"
-
-msgid "Set save mode"
-msgstr "Establecer modo de guardado"
-
-msgid "Adjust log server IP and port"
-msgstr "Ajustar IP y puerto del servidor"
-
-msgid "Game"
-msgstr "Juego"
-
-msgid "Launch method selection"
-msgstr "Seleccionar metodo de carga"
-
-msgid "Log server control"
-msgstr "Iniciar servidor"
-
-msgid "Credits"
-msgstr "Creditos"
-
-msgid "Credits to all contributors"
-msgstr "Créditos de los colaboladores"
-
-msgid "Game View TV"
-msgstr "Vista del Juego TV"
-
-msgid "Game View DRC"
-msgstr "Vista del Juego DRC"
-
-msgid "Game Path"
-msgstr "Ruta del Juego"
-
-msgid "Game Save Path"
-msgstr "Ruta de guardado"
-
-msgid "Game Save Mode"
-msgstr "Modo de Guardado"
-
-msgid "Launch Mode"
-msgstr "Modo de Carga"
-
-msgid "Log Server Control"
-msgstr "Control de Registros"
-
-msgid "Log Server IP"
-msgstr "IP del Servidor"
+#~ msgid "Log Server IP"
+#~ msgstr "IP del Servidor"

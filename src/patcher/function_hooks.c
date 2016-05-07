@@ -5,24 +5,47 @@
 #include "common/common.h"
 #include "common/fs_defs.h"
 #include "common/loader_defs.h"
+#include "common/retain_vars.h"
+#include "controller_patcher/cp_retain_vars.h"
 #include "game/rpx_rpl_table.h"
+#include "dynamic_libs/aoc_functions.h"
+#include "dynamic_libs/ax_functions.h"
 #include "dynamic_libs/fs_functions.h"
+#include "dynamic_libs/gx2_functions.h"
 #include "dynamic_libs/os_functions.h"
+#include "dynamic_libs/padscore_functions.h"
+#include "dynamic_libs/socket_functions.h"
+#include "dynamic_libs/sys_functions.h"
 #include "dynamic_libs/vpad_functions.h"
+#include "dynamic_libs/acp_functions.h"
+#include "dynamic_libs/syshid_functions.h"
 #include "kernel/kernel_functions.h"
 #include "system/exception_handler.h"
 #include "function_hooks.h"
 #include "fs/fs_utils.h"
 #include "utils/strings.h"
+#include "utils/logger.h"
+#include "utils/utils.h"
+#include "settings/SettingsEnums.h"
+#include "system/memory.h"
+#include "controller_patcher/controller_patcher.h"
+
+#include "cpp_to_c_util.h"
 
 #define LIB_CODE_RW_BASE_OFFSET                         0xC1000000
 #define CODE_RW_BASE_OFFSET                             0x00000000
+#define DEBUG_LOG_DYN                                   0
 
 #define USE_EXTRA_LOG_FUNCTIONS   0
 
 #define DECL(res, name, ...) \
         res (* real_ ## name)(__VA_ARGS__) __attribute__((section(".data"))); \
         res my_ ## name(__VA_ARGS__)
+
+#define PATH_TYPE_IGNORE    0
+#define PATH_TYPE_GAME      1
+#define PATH_TYPE_SAVE      2
+#define PATH_TYPE_AOC       3
 
 extern game_paths_t gamePathStruct;
 
@@ -55,7 +78,7 @@ static void client_num_free(int client) {
     bss.pClient_fs[client] = 0;
 }
 
-static int is_gamefile(const char *path) {
+static int getPathType(const char *path) {
     // In case the path starts by "//" and not "/" (some games do that ... ...)
     if (path[0] == '/' && path[1] == '/')
         path = &path[1];
@@ -68,40 +91,26 @@ static int is_gamefile(const char *path) {
         len++;
     }
 
-    while(*path && len < (int)sizeof(new_path)) {
+    while(*path && len < (int)(sizeof(new_path) - 1)) {
         new_path[len++] = *path++;
     }
+    new_path[len++] = 0;
 
     /* Note : no need to check everything, it is faster this way */
     if (m_strncasecmp(new_path, "/vol/content", 12) == 0)
-        return 1;
-
-    return 0;
-}
-static int is_savefile(const char *path) {
-    // In case the path starts by "//" and not "/" (some games do that ... ...)
-    if (path[0] == '/' && path[1] == '/')
-        path = &path[1];
-
-    // In case the path does not start with "/" (some games do that too ...)
-    int len = 0;
-    char new_path[16];
-    if(path[0] != '/') {
-        new_path[0] = '/';
-        len++;
-    }
-
-    while(*path && len < (int)sizeof(new_path)) {
-        new_path[len++] = *path++;
-    }
+        return PATH_TYPE_GAME;
 
     if (m_strncasecmp(new_path, "/vol/save", 9) == 0)
-        return 1;
+        return PATH_TYPE_SAVE;
+
+    if (m_strncasecmp(new_path, "/vol/aoc", 8) == 0)
+        return PATH_TYPE_AOC;
 
     return 0;
 }
 
-static void compute_new_path(char* new_path, const char* path, int len, int is_save) {
+static void compute_new_path(char* new_path, const char* path, int len, int pathType) {
+
     int i, n, path_offset = 0;
 
     // In case the path starts by "//" and not "/" (some games do that ... ...)
@@ -117,8 +126,22 @@ static void compute_new_path(char* new_path, const char* path, int len, int is_s
         path_offset += 2;
     }
 
-    if (!is_save) {
+    if(pathType == PATH_TYPE_GAME)
+    {
+		char * pathfoo = (char*)path + 13 + path_offset;
+		if(path[13 + path_offset] == '/') pathfoo++; //Skip double slash
+
         n = m_strlcpy(new_path, bss.mount_base, sizeof(bss.mount_base));
+
+		if(gSettingUseUpdatepath){
+			if(replacement_FileReplacer_isFileExisting(bss.file_replacer,pathfoo) == 0){
+                n -= (sizeof(CONTENT_PATH) -1); // Go back the content folder! (-1 to ignore \0)
+                n += m_strlcpy(new_path+n, UPDATE_PATH, sizeof(UPDATE_PATH));
+                new_path[n++] = '/';
+                n += m_strlcpy(new_path+n, gamePathStruct.update_folder, sizeof(gamePathStruct.update_folder));
+                n += m_strlcpy(new_path+n, CONTENT_PATH, sizeof(CONTENT_PATH));
+			}
+		}
 
         // copy the content file path with slash at the beginning
         for (i = 0; i < (len - 12 - path_offset); i++) {
@@ -132,9 +155,17 @@ static void compute_new_path(char* new_path, const char* path, int len, int is_s
 
         new_path[n++] = '\0';
     }
-    else {
+    else if(pathType == PATH_TYPE_SAVE)
+    {
         n = m_strlcpy(new_path, bss.save_base, sizeof(bss.save_base));
         new_path[n++] = '/';
+
+        if(gSettingUseUpdatepath){
+            if(gamePathStruct.extraSave){
+                n += m_strlcpy(new_path+n, gamePathStruct.update_folder, sizeof(gamePathStruct.update_folder));
+                n += m_strlcpy(new_path+n, "/", 2);
+            }
+        }
 
         // Create path for common and user dirs
         if (path[10 + path_offset] == 'c') // common dir ("common")
@@ -167,6 +198,17 @@ static void compute_new_path(char* new_path, const char* path, int len, int is_s
         }
         new_path[n++] = '\0';
     }
+    else if(pathType == PATH_TYPE_AOC)
+    {
+        char * pathfoo = (char*)path + 4 + path_offset;
+        if(pathfoo[0] == '/') pathfoo++; //Skip double slash
+
+        n = m_strlcpy(new_path, bss.mount_base, sizeof(bss.mount_base)) - m_strlen(CONTENT_PATH);
+        n += m_strlcpy(new_path + n, "/", sizeof(bss.mount_base) - n);
+        n += m_strlcpy(new_path + n, pathfoo, sizeof(bss.mount_base) - n);
+
+        new_path[n++] = '\0';
+    }
 }
 
 static int GetCurClient(void *pClient) {
@@ -177,6 +219,36 @@ static int GetCurClient(void *pClient) {
         }
     }
     return -1;
+}
+
+static int getNewPathLen(int pathType){
+
+    int len_base = 0;
+    if(pathType == PATH_TYPE_SAVE)
+    {
+        len_base += m_strlen(bss.save_base) + 15;
+        if(gSettingUseUpdatepath){
+            if(gamePathStruct.extraSave){
+                len_base += (m_strlen(gamePathStruct.update_folder) + 2);
+            }
+        }
+    }
+    else if(pathType == PATH_TYPE_AOC)
+    {
+        len_base += m_strlen(bss.mount_base) - m_strlen(CONTENT_PATH) + 23;
+    }
+    else
+    {
+        len_base += m_strlen(bss.mount_base);
+        if(gSettingUseUpdatepath){
+             len_base += sizeof(UPDATE_PATH);
+             //len_base += sizeof(CONTENT_PATH); <-- Is already in the path!
+             len_base += 1; // "/"
+             len_base += sizeof(gamePathStruct.update_folder);
+        }
+    }
+
+    return len_base;
 }
 
 DECL(int, FSInit, void)
@@ -200,7 +272,7 @@ DECL(int, FSInit, void)
 
         // create game mount path prefix
         __os_snprintf(bss.mount_base, sizeof(bss.mount_base), "%s/%s%s", gamePathStruct.os_game_path_base, gamePathStruct.game_dir, CONTENT_PATH);
-        // create game save path prefix
+		  // create game save path prefix
         __os_snprintf(bss.save_base, sizeof(bss.save_base), "%s/%s", gamePathStruct.os_save_path_base, gamePathStruct.game_dir);
         // copy save dirs
         __os_snprintf(bss.save_dir_common, sizeof(bss.save_dir_common), "%s", gamePathStruct.save_dir_common);
@@ -222,10 +294,17 @@ DECL(int, FSInit, void)
 
             int result = MountFS(pClient, pCmd, 0);
 
+			if(result == 0 && gSettingUseUpdatepath && GAME_LAUNCHED){
+				char filepath[255];
+				__os_snprintf(filepath, sizeof(filepath), "%s/%s%s/%s", gamePathStruct.os_game_path_base, gamePathStruct.game_dir,UPDATE_PATH, gamePathStruct.update_folder);
+				bss.file_replacer = (void*)replacement_FileReplacer_initWithFile(filepath,CONTENT_PATH,FILELIST_NAME,pClient,pCmd);
+			}
+
             fs_log_byte(bss.global_sock, (result == 0) ? BYTE_MOUNT_SD_OK : BYTE_MOUNT_SD_BAD);
 
             FSDelClient(pClient);
         }
+
 
         if(pClient)
             free(pClient);
@@ -241,6 +320,7 @@ DECL(int, FSShutdown, void) {
     if ((int)bss_ptr != 0x0a000000) {
         fs_logger_disconnect(bss.global_sock);
         bss.global_sock = -1;
+		replacement_FileReplacer_destroy(bss.file_replacer);
     }
     return real_FSShutdown();
 }
@@ -287,12 +367,13 @@ DECL(int, FSGetStat, void *pClient, void *pCmd, const char *path, FSStat *stats,
         // log
         fs_log_string(bss.socket_fs[client], path, BYTE_STAT);
         // change path if it is a game file
-        int is_save = 0;
-        if (is_gamefile(path) || (is_save = is_savefile(path))) {
+        int pathType = getPathType(path);
+        if (pathType) {
             int len = m_strlen(path);
-            int len_base = (is_save ? (m_strlen(bss.save_base) + 15) : m_strlen(bss.mount_base));
+            int len_base = getNewPathLen(pathType);
+
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, is_save);
+            compute_new_path(new_path, path, len, pathType);
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
             // return function with new_path if path exists
             return real_FSGetStat(pClient, pCmd, new_path, stats, error);
@@ -308,13 +389,13 @@ DECL(int, FSGetStatAsync, void *pClient, void *pCmd, const char *path, void *sta
         fs_log_string(bss.socket_fs[client], path, BYTE_STAT_ASYNC);
 
         // change path if it is a game/save file
-        int is_save = 0;
-        if (is_gamefile(path) || (is_save = is_savefile(path))) {
+        int pathType = getPathType(path);
+        if (pathType) {
             int len = m_strlen(path);
-            int len_base = (is_save ? (m_strlen(bss.save_base) + 15) : m_strlen(bss.mount_base));
+            int len_base = getNewPathLen(pathType);
+
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, is_save);
-            // log new path
+            compute_new_path(new_path, path, len, pathType);
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
             return real_FSGetStatAsync(pClient, pCmd, new_path, stats, error, asyncParams);
         }
@@ -333,7 +414,7 @@ DECL(int, FSOpenFile, void *pClient, void *pCmd, const char *path, const char *m
         int is_save = 0;
         if (is_gamefile(path) || (is_save = is_savefile(path))) {
             int len = m_strlen(path);
-            int len_base = (is_save ? (m_strlen(bss.save_base) + 15) : m_strlen(bss.mount_base));
+            int len_base = getNewPathLen(is_save);
             char new_path[len + len_base + 1];
             compute_new_path(new_path, path, len, is_save);
             // log new path
@@ -352,12 +433,13 @@ DECL(int, FSOpenFileAsync, void *pClient, void *pCmd, const char *path, const ch
         fs_log_string(bss.socket_fs[client], path, BYTE_OPEN_FILE_ASYNC);
 
         // change path if it is a game file
-        int is_save = 0;
-        if (is_gamefile(path) || (is_save = is_savefile(path))) {
+        int pathType = getPathType(path);
+        if (pathType) {
             int len = m_strlen(path);
-            int len_base = (is_save ? (m_strlen(bss.save_base) + 15) : m_strlen(bss.mount_base));
+            int len_base = getNewPathLen(pathType);
+
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, is_save);
+            compute_new_path(new_path, path, len, pathType);
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
             return real_FSOpenFileAsync(pClient, pCmd, new_path, mode, handle, error, asyncParams);
         }
@@ -372,12 +454,13 @@ DECL(int, FSOpenDir, void *pClient, void* pCmd, const char *path, int *handle, i
         fs_log_string(bss.socket_fs[client], path, BYTE_OPEN_DIR);
 
         // change path if it is a game folder
-        int is_save = 0;
-        if (is_gamefile(path) || (is_save = is_savefile(path))) {
+        int pathType = getPathType(path);
+        if (pathType) {
             int len = m_strlen(path);
-            int len_base = (is_save ? (m_strlen(bss.save_base) + 15) : m_strlen(bss.mount_base));
+            int len_base = getNewPathLen(pathType);
+
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, is_save);
+            compute_new_path(new_path, path, len, pathType);
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
             return real_FSOpenDir(pClient, pCmd, new_path, handle, error);
         }
@@ -392,12 +475,13 @@ DECL(int, FSOpenDirAsync, void *pClient, void* pCmd, const char *path, int *hand
         fs_log_string(bss.socket_fs[client], path, BYTE_OPEN_DIR_ASYNC);
 
         // change path if it is a game folder
-        int is_save = 0;
-        if (is_gamefile(path) || (is_save = is_savefile(path))) {
+        int pathType = getPathType(path);
+        if (pathType) {
             int len = m_strlen(path);
-            int len_base = (is_save ? (m_strlen(bss.save_base) + 15) : m_strlen(bss.mount_base));
+            int len_base = getNewPathLen(pathType);
+
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, is_save);
+            compute_new_path(new_path, path, len, pathType);
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
             return real_FSOpenDirAsync(pClient, pCmd, new_path, handle, error, asyncParams);
         }
@@ -412,12 +496,13 @@ DECL(int, FSChangeDir, void *pClient, void *pCmd, const char *path, int error) {
         fs_log_string(bss.socket_fs[client], path, BYTE_CHANGE_DIR);
 
         // change path if it is a game folder
-        int is_save = 0;
-        if (is_gamefile(path) || (is_save = is_savefile(path))) {
+        int pathType = getPathType(path);
+        if (pathType) {
             int len = m_strlen(path);
-            int len_base = (is_save ? (m_strlen(bss.save_base) + 15) : m_strlen(bss.mount_base));
+            int len_base = getNewPathLen(pathType);
+
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, is_save);
+            compute_new_path(new_path, path, len, pathType);
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
             return real_FSChangeDir(pClient, pCmd, new_path, error);
         }
@@ -432,12 +517,13 @@ DECL(int, FSChangeDirAsync, void *pClient, void *pCmd, const char *path, int err
         fs_log_string(bss.socket_fs[client], path, BYTE_CHANGE_DIR_ASYNC);
 
         // change path if it is a game folder
-        int is_save = 0;
-        if (is_gamefile(path) || (is_save = is_savefile(path))) {
+        int pathType = getPathType(path);
+        if (pathType) {
             int len = m_strlen(path);
-            int len_base = (is_save ? (m_strlen(bss.save_base) + 15) : m_strlen(bss.mount_base));
+            int len_base = getNewPathLen(pathType);
+
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, is_save);
+            compute_new_path(new_path, path, len, pathType);
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
             return real_FSChangeDirAsync(pClient, pCmd, new_path, error, asyncParams);
         }
@@ -453,11 +539,12 @@ DECL(int, FSMakeDir, void *pClient, void *pCmd, const char *path, int error) {
         fs_log_string(bss.socket_fs[client], path, BYTE_MAKE_DIR);
 
         // change path if it is a save folder
-        if (is_savefile(path)) {
+        int pathType = getPathType(path);
+        if (pathType == PATH_TYPE_SAVE) {
             int len = m_strlen(path);
-            int len_base = (m_strlen(bss.save_base) + 15);
+            int len_base = getNewPathLen(pathType);
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, 1);
+            compute_new_path(new_path, path, len, pathType);
 
             // log new path
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
@@ -476,11 +563,12 @@ DECL(int, FSMakeDirAsync, void *pClient, void *pCmd, const char *path, int error
         fs_log_string(bss.socket_fs[client], path, BYTE_MAKE_DIR_ASYNC);
 
         // change path if it is a save folder
-        if (is_savefile(path)) {
+        int pathType = getPathType(path);
+        if (pathType == PATH_TYPE_SAVE) {
             int len = m_strlen(path);
-            int len_base = (m_strlen(bss.save_base) + 15);
+            int len_base = getNewPathLen(pathType);
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, 1);
+            compute_new_path(new_path, path, len, pathType);
 
             // log new path
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
@@ -500,17 +588,18 @@ DECL(int, FSRename, void *pClient, void *pCmd, const char *oldPath, const char *
         fs_log_string(bss.socket_fs[client], newPath, BYTE_RENAME);
 
         // change path if it is a save folder
-        if (is_savefile(oldPath)) {
+        int pathType = getPathType(oldPath);
+        if (pathType == PATH_TYPE_SAVE) {
             // old path
-            int len_base = (m_strlen(bss.save_base) + 15);
+            int len_base = getNewPathLen(pathType);
             int len_old = m_strlen(oldPath);
             char new_old_path[len_old + len_base + 1];
-            compute_new_path(new_old_path, oldPath, len_old, 1);
+            compute_new_path(new_old_path, oldPath, len_old, pathType);
 
             // new path
             int len_new = m_strlen(newPath);
             char new_new_path[len_new + len_base + 1];
-            compute_new_path(new_new_path, newPath, len_new, 1);
+            compute_new_path(new_new_path, newPath, len_new, pathType);
 
             // log new path
             fs_log_string(bss.socket_fs[client], new_old_path, BYTE_LOG_STR);
@@ -531,17 +620,18 @@ DECL(int, FSRenameAsync, void *pClient, void *pCmd, const char *oldPath, const c
         fs_log_string(bss.socket_fs[client], newPath, BYTE_RENAME);
 
         // change path if it is a save folder
-        if (is_savefile(oldPath)) {
+        int pathType = getPathType(oldPath);
+        if (pathType == PATH_TYPE_SAVE) {
             // old path
-            int len_base = (m_strlen(bss.save_base) + 15);
+            int len_base = getNewPathLen(pathType);
             int len_old = m_strlen(oldPath);
             char new_old_path[len_old + len_base + 1];
-            compute_new_path(new_old_path, oldPath, len_old, 1);
+            compute_new_path(new_old_path, oldPath, len_old, pathType);
 
             // new path
             int len_new = m_strlen(newPath);
             char new_new_path[len_new + len_base + 1];
-            compute_new_path(new_new_path, newPath, len_new, 1);
+            compute_new_path(new_new_path, newPath, len_new, pathType);
 
             // log new path
             fs_log_string(bss.socket_fs[client], new_old_path, BYTE_LOG_STR);
@@ -561,11 +651,12 @@ DECL(int, FSRemove, void *pClient, void *pCmd, const char *path, int error) {
         fs_log_string(bss.socket_fs[client], path, BYTE_REMOVE);
 
         // change path if it is a save folder
-        if (is_savefile(path)) {
+        int pathType = getPathType(path);
+        if (pathType == PATH_TYPE_SAVE) {
             int len = m_strlen(path);
-            int len_base = (m_strlen(bss.save_base) + 15);
+            int len_base = getNewPathLen(pathType);
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, 1);
+            compute_new_path(new_path, path, len, pathType);
 
             // log new path
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
@@ -584,11 +675,12 @@ DECL(int, FSRemoveAsync, void *pClient, void *pCmd, const char *path, int error,
         fs_log_string(bss.socket_fs[client], path, BYTE_REMOVE);
 
         // change path if it is a save folder
-        if (is_savefile(path)) {
+        int pathType = getPathType(path);
+        if (pathType == PATH_TYPE_SAVE) {
             int len = m_strlen(path);
-            int len_base = (m_strlen(bss.save_base) + 15);
+            int len_base = getNewPathLen(pathType);
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, 1);
+            compute_new_path(new_path, path, len, pathType);
 
             // log new path
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
@@ -609,11 +701,12 @@ DECL(int, FSFlushQuota, void *pClient, void *pCmd, const char* path, int error) 
         fs_log_string(bss.global_sock, buffer, BYTE_LOG_STR);
 
         // change path if it is a save folder
-        if (is_savefile(path)) {
+        int pathType = getPathType(path);
+        if (pathType == PATH_TYPE_SAVE) {
             int len = m_strlen(path);
-            int len_base = (m_strlen(bss.save_base) + 15);
+            int len_base = getNewPathLen(pathType);
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, 1);
+            compute_new_path(new_path, path, len, pathType);
 
             // log new path
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
@@ -633,11 +726,12 @@ DECL(int, FSFlushQuotaAsync, void *pClient, void *pCmd, const char *path, int er
         fs_log_string(bss.global_sock, buffer, BYTE_LOG_STR);
 
         // change path if it is a save folder
-        if (is_savefile(path)) {
+        int pathType = getPathType(path);
+        if (pathType == PATH_TYPE_SAVE) {
             int len = m_strlen(path);
-            int len_base = (m_strlen(bss.save_base) + 15);
+            int len_base = getNewPathLen(pathType);
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, 1);
+            compute_new_path(new_path, path, len, pathType);
 
             // log new path
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
@@ -658,11 +752,12 @@ DECL(int, FSGetFreeSpaceSize, void *pClient, void *pCmd, const char *path, uint6
         fs_log_string(bss.global_sock, buffer, BYTE_LOG_STR);
 
         // change path if it is a save folder
-        if (is_savefile(path)) {
+        int pathType = getPathType(path);
+        if (pathType == PATH_TYPE_SAVE) {
             int len = m_strlen(path);
-            int len_base = (m_strlen(bss.save_base) + 15);
+            int len_base = getNewPathLen(pathType);
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, 1);
+            compute_new_path(new_path, path, len, pathType);
 
             // log new path
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
@@ -682,11 +777,12 @@ DECL(int, FSGetFreeSpaceSizeAsync, void *pClient, void *pCmd, const char *path, 
         fs_log_string(bss.global_sock, buffer, BYTE_LOG_STR);
 
         // change path if it is a save folder
-        if (is_savefile(path)) {
+        int pathType = getPathType(path);
+        if (pathType == PATH_TYPE_SAVE) {
             int len = m_strlen(path);
-            int len_base = (m_strlen(bss.save_base) + 15);
+            int len_base = getNewPathLen(pathType);
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, 1);
+            compute_new_path(new_path, path, len, pathType);
 
             // log new path
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
@@ -706,11 +802,12 @@ DECL(int, FSRollbackQuota, void *pClient, void *pCmd, const char *path, int erro
         fs_log_string(bss.global_sock, buffer, BYTE_LOG_STR);
 
         // change path if it is a save folder
-        if (is_savefile(path)) {
+        int pathType = getPathType(path);
+        if (pathType == PATH_TYPE_SAVE) {
             int len = m_strlen(path);
-            int len_base = (m_strlen(bss.save_base) + 15);
+            int len_base = getNewPathLen(pathType);
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, 1);
+            compute_new_path(new_path, path, len, pathType);
 
             // log new path
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
@@ -729,11 +826,12 @@ DECL(int, FSRollbackQuotaAsync, void *pClient, void *pCmd, const char *path, int
         fs_log_string(bss.global_sock, buffer, BYTE_LOG_STR);
 
         // change path if it is a save folder
-        if (is_savefile(path)) {
+        int pathType = getPathType(path);
+        if (pathType == PATH_TYPE_SAVE) {
             int len = m_strlen(path);
-            int len_base = (m_strlen(bss.save_base) + 15);
+            int len_base = getNewPathLen(pathType);
             char new_path[len + len_base + 1];
-            compute_new_path(new_path, path, len, 1);
+            compute_new_path(new_path, path, len, pathType);
 
             // log new path
             fs_log_string(bss.socket_fs[client], new_path, BYTE_LOG_STR);
@@ -771,14 +869,13 @@ static int LoadRPLToMemory(s_rpx_rpl *rpl_entry)
 
     // calculate path length for SD access of RPL
     int path_len = m_strlen(gamePathStruct.os_game_path_base) + m_strlen(gamePathStruct.game_dir) + m_strlen(RPX_RPL_PATH) + m_strlen(rpl_entry->name) + 3;
+	char *path_update_rpl = NULL;
     char *path_rpl = malloc(path_len);
     if(!path_rpl) {
         free(pCmd);
         free(pClient);
         return 0;
     }
-    // create path
-    __os_snprintf(path_rpl, path_len, "%s/%s%s/%s", gamePathStruct.os_game_path_base, gamePathStruct.game_dir, RPX_RPL_PATH, rpl_entry->name);
 
     // malloc mem for read file
     unsigned char* dataBuf = (unsigned char*)memalign(0x40, 0x10000);
@@ -789,6 +886,8 @@ static int LoadRPLToMemory(s_rpx_rpl *rpl_entry)
         return 0;
     }
 
+	unsigned char * dataBufPhysical = (unsigned char*)OSEffectiveToPhysical(dataBuf);
+
     // do more initial FS stuff
     FSInitCmdBlock(pCmd);
     FSAddClientEx(pClient, 0, -1);
@@ -796,6 +895,32 @@ static int LoadRPLToMemory(s_rpx_rpl *rpl_entry)
     // set RPL size to 0 to avoid wrong RPL being loaded when opening file fails
     rpl_entry->size = 0;
     rpl_entry->offset = 0;
+
+	// create path
+    __os_snprintf(path_rpl, path_len, "%s/%s%s/%s", gamePathStruct.os_game_path_base, gamePathStruct.game_dir, RPX_RPL_PATH, rpl_entry->name);
+
+	if(gSettingUseUpdatepath){
+        free(path_rpl);
+		int path_len_update_rpl = m_strlen(gamePathStruct.os_game_path_base) + m_strlen(gamePathStruct.game_dir) + m_strlen(UPDATE_PATH) + m_strlen(gamePathStruct.update_folder) + m_strlen(RPX_RPL_PATH) + m_strlen(rpl_entry->name) + 4;
+		path_update_rpl = malloc(path_len_update_rpl);
+		if(!path_update_rpl) {
+			free(pCmd);
+			free(pClient);
+			return 0;
+		}
+		__os_snprintf(path_update_rpl, path_len_update_rpl, "%s/%s%s/%s/%s", gamePathStruct.os_game_path_base, gamePathStruct.game_dir, UPDATE_PATH, gamePathStruct.update_folder, RPX_RPL_PATH, rpl_entry->name);
+		fs_log_string(bss.global_sock, path_update_rpl, BYTE_LOG_STR);
+		int ret = -2;
+		FSStat stats;
+		if((ret = real_FSGetStat(pClient, pCmd, path_update_rpl, &stats, FS_RET_ALL_ERROR)) == 0){
+			fs_log_string(bss.global_sock, "Loading RPL from update path", BYTE_LOG_STR);
+			path_rpl = path_update_rpl;
+		}else{
+			char error_message[50];
+			__os_snprintf(error_message, 50, "FSGetStat Result: %d", ret);
+			fs_log_string(bss.global_sock, error_message, BYTE_LOG_STR);
+		}
+	}
 
     int fd = 0;
     if (real_FSOpenFile(pClient, pCmd, path_rpl, "r", &fd, FS_RET_ALL_ERROR) == FS_STATUS_OK)
@@ -806,8 +931,10 @@ static int LoadRPLToMemory(s_rpx_rpl *rpl_entry)
         // Copy rpl in memory
         while ((ret = FSReadFile(pClient, pCmd, dataBuf, 0x1, 0x10000, fd, 0, FS_RET_ALL_ERROR)) > 0)
         {
+			m_DCFlushRange((u32)dataBuf, ret);
+
             // Copy in memory and save offset
-            int copiedData = rpxRplCopyDataToMem(rpl_entry, rpl_size, dataBuf, ret);
+            int copiedData = rpxRplCopyDataToMem(rpl_entry, rpl_size, dataBufPhysical, ret);
             if(copiedData != ret)
             {
                 char buffer[200];
@@ -834,7 +961,11 @@ static int LoadRPLToMemory(s_rpx_rpl *rpl_entry)
     free(dataBuf);
     free(pCmd);
     free(pClient);
-    free(path_rpl);
+	if(!gSettingUseUpdatepath){
+        free(path_rpl);
+    }else{
+        free(path_update_rpl);
+    }
     return 1;
 }
 
@@ -896,6 +1027,22 @@ DECL(int, OSDynLoad_Acquire, char* rpl, unsigned int *handle, int r5 __attribute
     return result;
 }
 
+
+static struct {
+    unsigned int fileType;
+    unsigned int sgBufferNumber;
+    unsigned int sgFileOffset;
+} loaderGlobals3XX;
+
+DECL(int, LiBounceOneChunk, const char * filename, int fileType, int procId, int * hunkBytes, int fileOffset, int bufferNumber, int * dst_address)
+{
+    loaderGlobals3XX.fileType = fileType;
+    loaderGlobals3XX.sgBufferNumber = bufferNumber;
+    loaderGlobals3XX.sgFileOffset = fileOffset;
+
+    return real_LiBounceOneChunk(filename, fileType, procId, hunkBytes, fileOffset, bufferNumber, dst_address);
+}
+
 // This function is called every time after LiBounceOneChunk.
 // It waits for the asynchronous call of LiLoadAsync for the IOSU to fill data to the RPX/RPL address
 // and return the still remaining bytes to load.
@@ -914,11 +1061,11 @@ DECL(int, LiWaitOneChunk, unsigned int * iRemainingBytes, const char *filename, 
     int *sgIsLoadingBuffer;
     int *sgFinishedLoadingBuffer;
 
-    // get the offset of per core global variable for dynload initialized (just a simple address + (core_id * 4))
-    unsigned int gDynloadInitialized;
-
     // get the current core
     asm volatile("mfspr %0, 0x3EF" : "=r" (core_id));
+
+    // get the offset of per core global variable for dynload initialized (just a simple address + (core_id * 4))
+    unsigned int gDynloadInitialized = *(volatile unsigned int*)(addr_gDynloadInitialized + (core_id << 2));
 
     // Comment (Dimok):
     // time measurement at this position for logger  -> we don't need it right now except maybe for debugging
@@ -929,7 +1076,6 @@ DECL(int, LiWaitOneChunk, unsigned int * iRemainingBytes, const char *filename, 
         // pointer to global variables of the loader
         loader_globals_550_t *loader_globals = (loader_globals_550_t*)(0xEFE19E80);
 
-        gDynloadInitialized = *(volatile unsigned int*)(0xEFE13DBC + (core_id << 2));
         sgBufferNumber = loader_globals->sgBufferNumber;
         sgFileOffset = loader_globals->sgFileOffset;
         sgBounceError = &loader_globals->sgBounceError;
@@ -939,12 +1085,24 @@ DECL(int, LiWaitOneChunk, unsigned int * iRemainingBytes, const char *filename, 
         // not available on 5.5.x
         sgIsLoadingBuffer = NULL;
     }
+    else if(OS_FIRMWARE < 400)
+    {
+        sgBufferNumber = loaderGlobals3XX.sgBufferNumber;
+        sgFileOffset = loaderGlobals3XX.sgFileOffset;
+        fileType = loaderGlobals3XX.fileType;   // fileType is actually not passed to this function on < 400
+        sgIsLoadingBuffer = (int *)addr_sgIsLoadingBuffer;
+
+        // not available on < 400
+        sgBounceError = NULL;
+        sgGotBytes = NULL;
+        sgTotalBytes = NULL;
+        sgFinishedLoadingBuffer = NULL;
+    }
     else
     {
         // pointer to global variables of the loader
-        loader_globals_t *loader_globals = (loader_globals_t*)(0xEFE19D00);
+        loader_globals_t *loader_globals = (loader_globals_t*)(addr_sgIsLoadingBuffer);
 
-        gDynloadInitialized = *(volatile unsigned int*)(0xEFE13C3C + (core_id << 2));
         sgBufferNumber = loader_globals->sgBufferNumber;
         sgFileOffset = loader_globals->sgFileOffset;
         sgBounceError = &loader_globals->sgBounceError;
@@ -1002,7 +1160,8 @@ DECL(int, LiWaitOneChunk, unsigned int * iRemainingBytes, const char *filename, 
 
             if (found)
             {
-                unsigned int load_address = (sgBufferNumber == 1) ? 0xF6000000 : 0xF6400000;
+                unsigned int load_address = (sgBufferNumber == 1) ? 0xF6000000 : (0xF6000000 + 0x00400000);
+                unsigned int load_addressPhys = (sgBufferNumber == 1) ? gLoaderPhysicalBufferAddr : (gLoaderPhysicalBufferAddr + 0x00400000); // virtual 0xF6000000 and 0xF6400000
 
                 // set our game RPX loaded variable for use in FS system
                 if(fileType == 0)
@@ -1013,7 +1172,12 @@ DECL(int, LiWaitOneChunk, unsigned int * iRemainingBytes, const char *filename, 
                     // truncate size
                     remaining_bytes = 0x400000;
 
-                rpxRplCopyDataFromMem(rpl_struct, sgFileOffset, (unsigned char*)load_address, remaining_bytes);
+                m_DCFlushRange(load_address, remaining_bytes);
+
+                rpxRplCopyDataFromMem(rpl_struct, sgFileOffset, (unsigned char*)load_addressPhys, remaining_bytes);
+
+                m_DCInvalidateRange(load_address, remaining_bytes);
+
                 // set result to 0 -> "everything OK"
                 result = 0;
                 break;
@@ -1026,6 +1190,7 @@ DECL(int, LiWaitOneChunk, unsigned int * iRemainingBytes, const char *filename, 
     {
         GAME_RPX_LOADED = 0;
         GAME_LAUNCHED = 0;
+		gSettingUseUpdatepath = 0;
         RPX_CHECK_NAME = 0xDEADBEAF;
     }
 
@@ -1033,16 +1198,18 @@ DECL(int, LiWaitOneChunk, unsigned int * iRemainingBytes, const char *filename, 
     //------------------------------------------------------------------------------------------------------------------
 
     // set the result to the global bounce error variable
-    *sgBounceError = result;
+    if(sgBounceError) {
+        *sgBounceError = result;
+    }
 
     // disable global flag that buffer is still loaded by IOSU
-	if(OS_FIRMWARE == 550)
+	if(sgFinishedLoadingBuffer)
     {
         unsigned int zeroBitCount = 0;
         asm volatile("cntlzw %0, %0" : "=r" (zeroBitCount) : "r"(*sgFinishedLoadingBuffer));
         *sgFinishedLoadingBuffer = zeroBitCount >> 5;
     }
-    else
+    else if(sgIsLoadingBuffer)
     {
         *sgIsLoadingBuffer = 0;
     }
@@ -1052,10 +1219,14 @@ DECL(int, LiWaitOneChunk, unsigned int * iRemainingBytes, const char *filename, 
         // the remaining size is set globally and in stack variable only
         // if a pointer was passed to this function
         if(iRemainingBytes) {
-            *sgGotBytes = remaining_bytes;
+            if(sgGotBytes) {
+                *sgGotBytes = remaining_bytes;
+            }
+
             *iRemainingBytes = remaining_bytes;
+
             // on 5.5.x a new variable for total loaded bytes was added
-            if(sgTotalBytes != NULL) {
+            if(sgTotalBytes) {
                 *sgTotalBytes += remaining_bytes;
             }
         }
@@ -1141,14 +1312,7 @@ DECL(int, FSIsEof_log, void *pClient, void *pCmd, int fd, int error) {
     fs_log_byte_for_client(pClient, BYTE_EOF);
     return real_FSIsEof_log(pClient, pCmd, fd, error);
 }
-DECL(int, FSReadDir_log, void *pClient, void *pCmd, int fd, void *dir_entry, int error) {
-    fs_log_byte_for_client(pClient, BYTE_READ_DIR);
-    return real_FSReadDir_log(pClient, pCmd, fd, dir_entry, error);
-}
-DECL(int, FSReadFile_log, void *pClient, void *pCmd, void *buffer, int size, int count, int fd, int flag, int error) {
-    fs_log_byte_for_client(pClient, BYTE_READ_FILE);
-    return real_FSReadFile_log(pClient, pCmd, buffer, size, count, fd, flag, error);
-}
+
 DECL(int, FSReadFileWithPos_log, void *pClient, void *pCmd, void *buffer, int size, int count, int pos, int fd, int flag, int error) {
     fs_log_byte_for_client(pClient, BYTE_READ_FILE_WITH_POS);
     return real_FSReadFileWithPos_log(pClient, pCmd, buffer, size, count, pos, fd, flag, error);
@@ -1165,11 +1329,11 @@ DECL(int, FSTruncateFile_log, void *pClient, void *pCmd, int fd, int error) {
     fs_log_byte_for_client(pClient, BYTE_TRUNCATE_FILE);
     return real_FSTruncateFile_log(pClient, pCmd, fd, error);
 }
-DECL(int, FSWriteFile_log, void *pClient, void *pCmd, const void *source, int size, int count, int fd, FSFlag flag, int error) {
+DECL(int, FSWriteFile_log, void *pClient, void *pCmd, const void *source, int size, int count, int fd, u32 flag, int error) {
     fs_log_byte_for_client(pClient, BYTE_WRITE_FILE);
     return real_FSWriteFile_log(pClient, pCmd, source, size, count, fd, flag, error);
 }
-DECL(int, FSWriteFileWithPos_log, void *pClient, void *pCmd, const void *source, int size, int count, int pos, int fd, FSFlag flag, int error) {
+DECL(int, FSWriteFileWithPos_log, void *pClient, void *pCmd, const void *source, int size, int count, int pos, int fd, u32 flag, int error) {
     fs_log_byte_for_client(pClient, BYTE_WRITE_FILE_WITH_POS);
     return real_FSWriteFileWithPos_log(pClient, pCmd, source, size, count, pos, fd, flag, error);
 }
@@ -1194,211 +1358,250 @@ DECL(int, FSGetVolumeState_log, void *pClient) {
 
 #endif
 
+DECL(void, GX2CopyColorBufferToScanBuffer, const GX2ColorBuffer *colorBuffer, s32 scan_target){
+
+    if(gHIDCurrentDevice & HID_LIST_MOUSE && gHID_Mouse_Mode == HID_MOUSE_MODE_TOUCH) {
+        draw_Cursor_at(gHID_Mouse.pad_data[0].data[0].X, gHID_Mouse.pad_data[0].data[0].Y);
+    }
+    real_GX2CopyColorBufferToScanBuffer(colorBuffer,scan_target);
+}
+
+DECL(void, _Exit, void){
+    draw_Cursor_destroy();
+    real__Exit();
+}
+
 DECL(int, VPADRead, int chan, VPADData *buffer, u32 buffer_size, s32 *error) {
+
     int result = real_VPADRead(chan, buffer, buffer_size, error);
 
-    if(buffer->btns_r&VPAD_BUTTON_STICK_R) {
-        int mode;
-        VPADGetLcdMode(0, &mode);       // Get current display mode
-        if(mode != 1) {
-            VPADSetLcdMode(0, 1);       // Turn it off
-        }
-        else {
-            VPADSetLcdMode(0, 0xFF);    // Turn it on
-        }
+    if((gHIDPADEnabled == SETTING_ON) && gHIDAttached){
+        setControllerDataFromHID(buffer,gHIDCurrentDevice);
     }
 
+    if(gSettingPadconMode == SETTING_ON){
+        if(buffer->btns_r&VPAD_BUTTON_STICK_R) {
+            int mode;
+            VPADGetLcdMode(0, &mode);       // Get current display mode
+            if(mode != 1) {
+                VPADSetLcdMode(0, 1);       // Turn it off
+            }
+            else {
+                VPADSetLcdMode(0, 0xFF);    // Turn it on
+            }
+        }
+    }
+    return result;
+}
+
+DECL(int, ACPGetAddOnUniqueId, unsigned int * id_buffer, int buffer_size)
+{
+    int result = real_ACPGetAddOnUniqueId(id_buffer, buffer_size);
+
+    if(GAME_LAUNCHED && gEnableDLC)
+    {
+        id_buffer[0] = (cosAppXmlInfoStruct.title_id >> 8) & 0xffff;
+        result = 0;
+    }
+
+    return result;
+}
+
+DECL(int, AOC_OpenTitle, char * path, void * target, void * buffer, unsigned int buffer_size)
+{
+    int result  = real_AOC_OpenTitle(path, target, buffer, buffer_size);
+
+    if(GAME_LAUNCHED && gEnableDLC && (result != 0))
+    {
+        sprintf(path, "/vol/aoc0005000c%08x", (u32)(cosAppXmlInfoStruct.title_id & 0xffffffff));
+        result = 0;
+    }
     return result;
 }
 
 /* *****************************************************************************
  * Creates function pointer array
  * ****************************************************************************/
-#define MAKE_MAGIC(x, lib) { (unsigned int) my_ ## x, (unsigned int) &real_ ## x, lib, # x }
+#define MAKE_MAGIC(x, lib,functionType) { (unsigned int) my_ ## x, (unsigned int) &real_ ## x, lib, # x,0,0,functionType,0}
 
-static const struct hooks_magic_t {
+static struct hooks_magic_t {
     const unsigned int replaceAddr;
     const unsigned int replaceCall;
     const unsigned int library;
-    const char functionName[30];
+    const char functionName[50];
+    unsigned int realAddr;
+    unsigned int restoreInstruction;
+    unsigned char functionType;
+    unsigned char alreadyPatched;
 } method_hooks[] = {
-    // Common FS functions
-    MAKE_MAGIC(FSInit,                      LIB_CORE_INIT),
-    MAKE_MAGIC(FSShutdown,                  LIB_CORE_INIT),
-    MAKE_MAGIC(FSAddClientEx,               LIB_CORE_INIT),
-    MAKE_MAGIC(FSDelClient,                 LIB_CORE_INIT),
+     // Common FS functions
+    MAKE_MAGIC(FSInit,                      LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSShutdown,                  LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSAddClientEx,               LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSDelClient,                 LIB_CORE_INIT,STATIC_FUNCTION),
 
     // Replacement functions
-    MAKE_MAGIC(FSGetStat,                   LIB_CORE_INIT),
-    MAKE_MAGIC(FSGetStatAsync,              LIB_CORE_INIT),
-    MAKE_MAGIC(FSOpenFile,                  LIB_CORE_INIT),
-    MAKE_MAGIC(FSOpenFileAsync,             LIB_CORE_INIT),
-    MAKE_MAGIC(FSOpenDir,                   LIB_CORE_INIT),
-    MAKE_MAGIC(FSOpenDirAsync,              LIB_CORE_INIT),
-    MAKE_MAGIC(FSChangeDir,                 LIB_CORE_INIT),
-    MAKE_MAGIC(FSChangeDirAsync,            LIB_CORE_INIT),
-    MAKE_MAGIC(FSMakeDir,                   LIB_CORE_INIT),
-    MAKE_MAGIC(FSMakeDirAsync,              LIB_CORE_INIT),
-    MAKE_MAGIC(FSRename,                    LIB_CORE_INIT),
-    MAKE_MAGIC(FSRenameAsync,               LIB_CORE_INIT),
-    MAKE_MAGIC(FSRemove,                    LIB_CORE_INIT),
-    MAKE_MAGIC(FSRemoveAsync,               LIB_CORE_INIT),
-    MAKE_MAGIC(FSFlushQuota,                LIB_CORE_INIT),
-    MAKE_MAGIC(FSFlushQuotaAsync,           LIB_CORE_INIT),
-    MAKE_MAGIC(FSGetFreeSpaceSize,          LIB_CORE_INIT),
-    MAKE_MAGIC(FSGetFreeSpaceSizeAsync,     LIB_CORE_INIT),
-    MAKE_MAGIC(FSRollbackQuota,             LIB_CORE_INIT),
-    MAKE_MAGIC(FSRollbackQuotaAsync,        LIB_CORE_INIT),
+    MAKE_MAGIC(FSGetStat,                   LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSGetStatAsync,              LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSOpenFile,                  LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSOpenFileAsync,             LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSOpenDir,                   LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSOpenDirAsync,              LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSChangeDir,                 LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSChangeDirAsync,            LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSMakeDir,                   LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSMakeDirAsync,              LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSRename,                    LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSRenameAsync,               LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSRemove,                    LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSRemoveAsync,               LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSFlushQuota,                LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSFlushQuotaAsync,           LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSGetFreeSpaceSize,          LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSGetFreeSpaceSizeAsync,     LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSRollbackQuota,             LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSRollbackQuotaAsync,        LIB_CORE_INIT,STATIC_FUNCTION),
 
     // LOADER function
-    MAKE_MAGIC(LiWaitOneChunk,              LIB_LOADER),
+    MAKE_MAGIC(LiWaitOneChunk,              LIB_LOADER,STATIC_FUNCTION),
+    MAKE_MAGIC(LiBounceOneChunk,            LIB_LOADER,STATIC_FUNCTION),
 
     // Dynamic RPL loading functions
-    MAKE_MAGIC(OSDynLoad_Acquire,           LIB_CORE_INIT),
-#if (USE_EXTRA_LOG_FUNCTIONS == 1)
-    MAKE_MAGIC(OSDynLoad_GetModuleName,     LIB_CORE_INIT),
-    MAKE_MAGIC(OSDynLoad_IsModuleLoaded,    LIB_CORE_INIT),
+    MAKE_MAGIC(OSDynLoad_Acquire,           LIB_CORE_INIT,STATIC_FUNCTION),
 
-    MAKE_MAGIC(FSCloseFile_log,             LIB_CORE_INIT),
-    MAKE_MAGIC(FSCloseDir_log,              LIB_CORE_INIT),
-    MAKE_MAGIC(FSFlushFile_log,             LIB_CORE_INIT),
-    MAKE_MAGIC(FSGetErrorCodeForViewer_log, LIB_CORE_INIT),
-    MAKE_MAGIC(FSGetLastError_log,          LIB_CORE_INIT),
-    MAKE_MAGIC(FSGetPosFile_log,            LIB_CORE_INIT),
-    MAKE_MAGIC(FSGetStatFile_log,           LIB_CORE_INIT),
-    MAKE_MAGIC(FSIsEof_log,                 LIB_CORE_INIT),
-    MAKE_MAGIC(FSReadDir_log,               LIB_CORE_INIT),
-    MAKE_MAGIC(FSReadFile_log,              LIB_CORE_INIT),
-    MAKE_MAGIC(FSReadFileWithPos_log,       LIB_CORE_INIT),
-    MAKE_MAGIC(FSSetPosFile_log,            LIB_CORE_INIT),
-    MAKE_MAGIC(FSSetStateChangeNotification_log, LIB_CORE_INIT),
-    MAKE_MAGIC(FSTruncateFile_log,          LIB_CORE_INIT),
-    MAKE_MAGIC(FSWriteFile_log,             LIB_CORE_INIT),
-    MAKE_MAGIC(FSWriteFileWithPos_log,      LIB_CORE_INIT),
-    MAKE_MAGIC(FSGetVolumeState_log,        LIB_CORE_INIT),
+    MAKE_MAGIC(VPADRead,                    LIB_VPAD,STATIC_FUNCTION),
+    MAKE_MAGIC(GX2CopyColorBufferToScanBuffer,     LIB_GX2,STATIC_FUNCTION),
+    MAKE_MAGIC(_Exit,                       LIB_CORE_INIT,STATIC_FUNCTION),
+
+    MAKE_MAGIC(ACPGetAddOnUniqueId,         LIB_NN_ACP,DYNAMIC_FUNCTION),
+    MAKE_MAGIC(AOC_OpenTitle,               LIB_NN_AOC,DYNAMIC_FUNCTION),
+
+    #if (USE_EXTRA_LOG_FUNCTIONS == 1)
+    MAKE_MAGIC(FSCloseFile_log,             LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSCloseDir_log,              LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSFlushFile_log,             LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSGetErrorCodeForViewer_log, LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSGetLastError_log,          LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSGetPosFile_log,            LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSGetStatFile_log,           LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSIsEof_log,                 LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSReadDir_log,               LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSReadFile_log,              LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSReadFileWithPos_log,       LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSSetPosFile_log,            LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSSetStateChangeNotification_log, LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSTruncateFile_log,          LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSWriteFile_log,             LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSWriteFileWithPos_log,      LIB_CORE_INIT,STATIC_FUNCTION),
+    MAKE_MAGIC(FSGetVolumeState_log,        LIB_CORE_INIT,STATIC_FUNCTION),
 #endif
-
-    MAKE_MAGIC(VPADRead,                    LIB_VPAD),
 };
 
-//! buffer to store our 2 instructions needed for our replacements
+//! buffer to store our 7 instructions needed for our replacements
 //! the code will be placed in the address of that buffer - CODE_RW_BASE_OFFSET
 //! avoid this buffer to be placed in BSS and reset on start up
-volatile unsigned int fs_method_calls[sizeof(method_hooks) / sizeof(struct hooks_magic_t) * 2] __attribute__((section(".data")));
+volatile unsigned int dynamic_method_calls[sizeof(method_hooks) / sizeof(struct hooks_magic_t) * 7] __attribute__((section(".data")));
 
-void PatchMethodHooks(int padmode)
+/*
+*Patches a function that is loaded at the start of each application. Its not required to restore, at least when they are really dynamic.
+* "normal" functions should be patch with the normal patcher.
+*/
+void PatchMethodHooks(void)
 {
-    restore_instructions_t * restore = (restore_instructions_t *)(RESTORE_INSTR_ADDR);
-    //! check if it is already patched
-    if(restore->magic == RESTORE_INSTR_MAGIC)
-        return;
-
-    restore->magic = RESTORE_INSTR_MAGIC;
-    restore->instr_count = 0;
-
-    bat_table_t table;
-    KernelSetDBATs(&table);
-
-    /* Patch branches to it. */
-    volatile unsigned int *space = &fs_method_calls[0];
+    /* Patch branches to it.  */
+    volatile unsigned int *space = &dynamic_method_calls[0];
 
     int method_hooks_count = sizeof(method_hooks) / sizeof(struct hooks_magic_t);
 
+    u32 skip_instr = 1;
+    u32 my_instr_len = 6;
+    u32 instr_len = my_instr_len + skip_instr;
+    u32 flush_len = 4*instr_len;
     for(int i = 0; i < method_hooks_count; i++)
     {
+        if(method_hooks[i].functionType == STATIC_FUNCTION && method_hooks[i].alreadyPatched == 1){
+            if(isDynamicFunction((u32)OSEffectiveToPhysical((void*)method_hooks[i].realAddr))){
+                log_printf("The function %s is a dynamic function. Please fix that <3\n", method_hooks[i].functionName);
+                method_hooks[i].functionType = DYNAMIC_FUNCTION;
+            }else{
+                log_printf("Skipping %s, its already patched\n", method_hooks[i].functionName);
+                space += instr_len;
+                continue;
+            }
+        }
+
+        u32 physical = 0;
         unsigned int repl_addr = (unsigned int)method_hooks[i].replaceAddr;
         unsigned int call_addr = (unsigned int)method_hooks[i].replaceCall;
 
-        unsigned int real_addr = 0;
+        unsigned int real_addr = GetAddressOfFunction(method_hooks[i].functionName,method_hooks[i].library);
 
-        if(strcmp(method_hooks[i].functionName, "OSDynLoad_Acquire") == 0)
-        {
-            memcpy(&real_addr, &OSDynLoad_Acquire, 4);
-        }
-        else if(strcmp(method_hooks[i].functionName, "LiWaitOneChunk") == 0)
-        {
-            memcpy(&real_addr, &addr_LiWaitOneChunk, 4);
-        }
-        else if(strcmp(method_hooks[i].functionName, "VPADRead") == 0)
-        {
-            if(padmode == 1) {
-                OSDynLoad_FindExport(vpad_handle, 0, method_hooks[i].functionName, &real_addr);
-            }
-            if(padmode == 0) continue;
-        }
-        else
-        {
-            OSDynLoad_FindExport(coreinit_handle, 0, method_hooks[i].functionName, &real_addr);
+        if(!real_addr){
+            log_printf("OSDynLoad_FindExport failed for %s\n", method_hooks[i].functionName);
+            space += instr_len;
+            continue;
         }
 
-        // fill the restore instruction section
-        restore->data[restore->instr_count].addr = real_addr;
-        restore->data[restore->instr_count].instr = *(volatile unsigned int *)(LIB_CODE_RW_BASE_OFFSET + real_addr);
-        restore->instr_count++;
+        if(DEBUG_LOG_DYN)log_printf("%s is located at %08X!\n", method_hooks[i].functionName,real_addr);
 
-        // set pointer to the real function
+        physical = (u32)OSEffectiveToPhysical((void*)real_addr);
+        if(!physical){
+             log_printf("Something is wrong with the physical address\n");
+             space += instr_len;
+             continue;
+        }
+
+        if(DEBUG_LOG_DYN)log_printf("%s physical is located at %08X!\n", method_hooks[i].functionName,physical);
+
         *(volatile unsigned int *)(call_addr) = (unsigned int)(space) - CODE_RW_BASE_OFFSET;
-        DCFlushRange((void*)(call_addr), 4);
 
-        // fill the instruction of the real function
-        *space = *(volatile unsigned int*)(LIB_CODE_RW_BASE_OFFSET + real_addr);
+        log_printf("copy replace instructions\n");
+        SC0x25_KernelCopyData((u32)space, physical, 4);
         space++;
 
-        // jump to real function skipping the first/replaced instruction
-        *space = 0x48000002 | ((real_addr + 4) & 0x03fffffc);
-        space++;
-        DCFlushRange((void*)(space - 2), 8);
-        ICInvalidateRange((unsigned char*)(space - 2) - CODE_RW_BASE_OFFSET, 8);
+        //Only works if skip_instr == 1
+        if(skip_instr == 1){
+            // fill the restore instruction section
+            method_hooks[i].realAddr = real_addr;
+            method_hooks[i].restoreInstruction = *(space-1);
+        }
+        else{
+            log_printf("Can't save %s for restoring!\n", method_hooks[i].functionName);
+        }
 
+        //adding jump to real function
+        /*
+            90 61 ff e0     stw     r3,-32(r1)
+            3c 60 12 34     lis     r3,4660
+            60 63 56 78     ori     r3,r3,22136
+            7c 69 03 a6     mtctr   r3
+            80 61 ff e0     lwz     r3,-32(r1)
+            4e 80 04 20     bctr*/
+        *space = 0x9061FFE0;
+        space++;
+        *space = 0x3C600000 | (((real_addr + (skip_instr * 4)) >> 16) & 0x0000FFFF); // lis r3, real_addr@h
+        space++;
+        *space = 0x60630000 |  ((real_addr + (skip_instr * 4)) & 0x0000ffff); // ori r3, r3, real_addr@l
+        space++;
+        *space = 0x7C6903A6; // mtctr   r3
+        space++;
+        *space = 0x8061FFE0; // lwz     r3,-32(r1)
+        space++;
+        *space = 0x4E800420; // bctr
+        space++;
+        DCFlushRange((void*)(space - instr_len), flush_len);
+        ICInvalidateRange((unsigned char*)(space - instr_len), flush_len);
+
+        //setting jump back
         unsigned int replace_instr = 0x48000002 | (repl_addr & 0x03fffffc);
-        *(volatile unsigned int *)(LIB_CODE_RW_BASE_OFFSET + real_addr) = replace_instr;
-        DCFlushRange((void*)(LIB_CODE_RW_BASE_OFFSET + real_addr), 4);
+        DCFlushRange(&replace_instr, 4);
+
+        SC0x25_KernelCopyData(physical, (u32)OSEffectiveToPhysical(&replace_instr), 4);
         ICInvalidateRange((void*)(real_addr), 4);
-    }
 
-    //! TODO: Not sure if this is still needed at all after changing the SDK version in the xml struct, check that
-    if((OS_FIRMWARE == 532) || (OS_FIRMWARE == 540))
-    {
-        /* Patch to bypass SDK version tests */
-        *((volatile unsigned int *)(LIB_CODE_RW_BASE_OFFSET + 0x010095b4)) = 0x480000a0; // ble loc_1009654    (0x408100a0) => b loc_1009654      (0x480000a0)
-        *((volatile unsigned int *)(LIB_CODE_RW_BASE_OFFSET + 0x01009658)) = 0x480000e8; // bge loc_1009740    (0x408100a0) => b loc_1009740      (0x480000e8)
-        DCFlushRange((void*)(LIB_CODE_RW_BASE_OFFSET + 0x010095b4), 4);
-        ICInvalidateRange((void*)(0x010095b4), 4);
-        DCFlushRange((void*)(LIB_CODE_RW_BASE_OFFSET + 0x01009658), 4);
-        ICInvalidateRange((void*)(0x01009658), 4);
+        method_hooks[i].alreadyPatched = 1;
     }
-    else if((OS_FIRMWARE == 500) || (OS_FIRMWARE == 510))
-    {
-        /* Patch to bypass SDK version tests */
-        *((volatile unsigned int *)(LIB_CODE_RW_BASE_OFFSET + 0x010091CC)) = 0x480000a0; // ble loc_1009654    (0x408100a0) => b loc_1009654      (0x480000a0)
-        *((volatile unsigned int *)(LIB_CODE_RW_BASE_OFFSET + 0x01009270)) = 0x480000e8; // bge loc_1009740    (0x408100a0) => b loc_1009740      (0x480000e8)
-        DCFlushRange((void*)(LIB_CODE_RW_BASE_OFFSET + 0x010091CC), 4);
-        ICInvalidateRange((void*)(0x010091CC), 4);
-        DCFlushRange((void*)(LIB_CODE_RW_BASE_OFFSET + 0x01009270), 4);
-        ICInvalidateRange((void*)(0x01009270), 4);
-    }
-    else if ((OS_FIRMWARE == 400) || (OS_FIRMWARE == 410))
-    {
-        /* Patch to bypass SDK version tests */
-        *((volatile unsigned int *)(LIB_CODE_RW_BASE_OFFSET + 0x01008DAC)) = 0x480000a0; // ble loc_1009654    (0x408100a0) => b loc_1009654      (0x480000a0)
-        *((volatile unsigned int *)(LIB_CODE_RW_BASE_OFFSET + 0x01008E50)) = 0x480000e8; // bge loc_1009740    (0x408100a0) => b loc_1009740      (0x480000e8)
-        DCFlushRange((void*)(LIB_CODE_RW_BASE_OFFSET + 0x01008DAC), 4);
-        ICInvalidateRange((void*)(0x01008DAC), 4);
-        DCFlushRange((void*)(LIB_CODE_RW_BASE_OFFSET + 0x01008E50), 4);
-        ICInvalidateRange((void*)(0x01008E50), 4);
-    }
-	else if (OS_FIRMWARE == 550)
-    {
-       /* Patch to bypass SDK version tests */
-        *((volatile unsigned int *)(LIB_CODE_RW_BASE_OFFSET + 0x010097AC)) = 0x480000a0; // ble loc_1009654    (0x408100a0) => b loc_1009654      (0x480000a0)
-        *((volatile unsigned int *)(LIB_CODE_RW_BASE_OFFSET + 0x01009850)) = 0x480000e8; // bge loc_1009740    (0x408100a0) => b loc_1009740      (0x480000e8)
-        DCFlushRange((void*)(LIB_CODE_RW_BASE_OFFSET + 0x010097AC), 4);
-        ICInvalidateRange((void*)(0x010097AC), 4);
-        DCFlushRange((void*)(LIB_CODE_RW_BASE_OFFSET + 0x01009850), 4);
-        ICInvalidateRange((void*)(0x01009850), 4);
-    }
-
-    KernelRestoreDBATs(&table);
+    log_print("Done with patching all functions!\n");
 }
 
 /* ****************************************************************** */
@@ -1406,23 +1609,254 @@ void PatchMethodHooks(int padmode)
 /* ****************************************************************** */
 void RestoreInstructions(void)
 {
-    bat_table_t table;
-    KernelSetDBATs(&table);
-
-    restore_instructions_t * restore = (restore_instructions_t *)(RESTORE_INSTR_ADDR);
-    if(restore->magic == RESTORE_INSTR_MAGIC)
+    log_printf("Restore functions!\n");
+    int method_hooks_count = sizeof(method_hooks) / sizeof(struct hooks_magic_t);
+    for(int i = 0; i < method_hooks_count; i++)
     {
-        for(unsigned int i = 0; i < restore->instr_count; i++)
-        {
-            *(volatile unsigned int *)(LIB_CODE_RW_BASE_OFFSET + restore->data[i].addr) = restore->data[i].instr;
-            DCFlushRange((void*)(LIB_CODE_RW_BASE_OFFSET + restore->data[i].addr), 4);
-            ICInvalidateRange((void*)restore->data[i].addr, 4);
+        if(method_hooks[i].restoreInstruction == 0 || method_hooks[i].realAddr == 0){
+            log_printf("I dont have the information for the restore =( skip\n");
+            continue;
         }
 
-    }
-    restore->magic = 0;
-    restore->instr_count = 0;
+        unsigned int real_addr = GetAddressOfFunction(method_hooks[i].functionName,method_hooks[i].library);
 
-    KernelRestoreDBATs(&table);
+        if(!real_addr){
+            log_printf("OSDynLoad_FindExport failed for %s\n", method_hooks[i].functionName);
+            continue;
+        }
+
+        u32 physical = (u32)OSEffectiveToPhysical((void*)real_addr);
+        if(!physical){
+            log_printf("Something is wrong with the physical address\n");
+            continue;
+        }
+
+        if(isDynamicFunction(physical))
+        {
+             log_printf("Its a dynamic function. We don't need to restore it! %s\n",method_hooks[i].functionName);
+        }
+        else
+        {
+            SC0x25_KernelCopyData(physical, (u32)&method_hooks[i].restoreInstruction, 4);
+            ICInvalidateRange((void*)method_hooks[i].realAddr, 4);
+        }
+        method_hooks[i].alreadyPatched = 0; // In case a
+    }
+
     KernelRestoreInstructions();
+    gPatchSDKDone = 0;
+    log_print("Done with restoring all functions!\n");
+}
+
+int isDynamicFunction(unsigned int physicalAddress){
+    if((physicalAddress & 0x80000000) == 0x80000000){
+        return 1;
+    }
+    return 0;
+}
+
+unsigned int GetAddressOfFunction(const char * functionName,unsigned int library){
+    unsigned int real_addr = 0;
+
+    if(strcmp(functionName, "OSDynLoad_Acquire") == 0)
+    {
+        memcpy(&real_addr, &OSDynLoad_Acquire, 4);
+        return real_addr;
+    }
+    else if(strcmp(functionName, "LiWaitOneChunk") == 0)
+    {
+        real_addr = (unsigned int)addr_LiWaitOneChunk;
+        return real_addr;
+    }
+    else if(strcmp(functionName, "LiBounceOneChunk") == 0)
+    {
+        //! not required on firmwares above 3.1.0
+        if(OS_FIRMWARE >= 400)
+            return 0;
+
+        unsigned int addr_LiBounceOneChunk = 0x010003A0;
+        real_addr = (unsigned int)addr_LiBounceOneChunk;
+        return real_addr;
+    }
+
+    unsigned int rpl_handle = 0;
+    if(library == LIB_CORE_INIT){
+        log_printf("FindExport of %s! From LIB_CORE_INIT\n", functionName);
+        if(coreinit_handle == 0){log_print("LIB_CORE_INIT not aquired\n"); return 0;}
+        rpl_handle = coreinit_handle;
+    }
+    else if(library == LIB_NSYSNET){
+        log_printf("FindExport of %s! From LIB_NSYSNET\n", functionName);
+        if(nsysnet_handle == 0){log_print("LIB_NSYSNET not aquired\n"); return 0;}
+        rpl_handle = nsysnet_handle;
+    }
+    else if(library == LIB_GX2){
+        log_printf("FindExport of %s! From LIB_GX2\n", functionName);
+        if(gx2_handle == 0){log_print("LIB_GX2 not aquired\n"); return 0;}
+        rpl_handle = gx2_handle;
+    }
+    else if(library == LIB_NN_AOC){
+        log_printf("FindExport of %s! From LIB_NN_AOC\n", functionName);
+        OSDynLoad_Acquire("nn_aoc.rpl", &aoc_handle);
+        if(aoc_handle == 0){log_print("LIB_NN_AOC not aquired\n"); return 0;}
+        rpl_handle = aoc_handle;
+    }
+    else if(library == LIB_AX){
+        log_printf("FindExport of %s! From LIB_AX\n", functionName);
+        if(sound_handle == 0){log_print("LIB_AX not aquired\n"); return 0;}
+        rpl_handle = sound_handle;
+    }
+    else if(library == LIB_FS){
+        log_printf("FindExport of %s! From LIB_FS\n", functionName);
+        if(coreinit_handle == 0){log_print("LIB_FS not aquired\n"); return 0;}
+        rpl_handle = coreinit_handle;
+    }
+    else if(library == LIB_OS){
+        log_printf("FindExport of %s! From LIB_OS\n", functionName);
+        if(coreinit_handle == 0){log_print("LIB_OS not aquired\n"); return 0;}
+        rpl_handle = coreinit_handle;
+    }
+    else if(library == LIB_PADSCORE){
+        log_printf("FindExport of %s! From LIB_PADSCORE\n", functionName);
+        if(padscore_handle == 0){log_print("LIB_PADSCORE not aquired\n"); return 0;}
+        rpl_handle = padscore_handle;
+    }
+    else if(library == LIB_SOCKET){
+        log_printf("FindExport of %s! From LIB_SOCKET\n", functionName);
+        if(nsysnet_handle == 0){log_print("LIB_SOCKET not aquired\n"); return 0;}
+        rpl_handle = nsysnet_handle;
+    }
+    else if(library == LIB_SYS){
+        log_printf("FindExport of %s! From LIB_SYS\n", functionName);
+        if(sysapp_handle == 0){log_print("LIB_SYS not aquired\n"); return 0;}
+        rpl_handle = sysapp_handle;
+    }
+    else if(library == LIB_VPAD){
+        log_printf("FindExport of %s! From LIB_VPAD\n", functionName);
+        if(vpad_handle == 0){log_print("LIB_VPAD not aquired\n"); return 0;}
+        rpl_handle = vpad_handle;
+    }
+    else if(library == LIB_NN_ACP){
+        log_printf("FindExport of %s! From LIB_NN_ACP\n", functionName);
+        OSDynLoad_Acquire("nn_acp.rpl", &acp_handle);
+        if(acp_handle == 0){log_print("LIB_NN_ACP not aquired\n"); return 0;}
+        rpl_handle = acp_handle;
+    }
+    else if(library == LIB_SYSHID){
+        log_printf("FindExport of %s! From LIB_SYSHID\n", functionName);
+        if(syshid_handle == 0){log_print("LIB_SYSHID not aquired\n"); return 0;}
+        rpl_handle = syshid_handle;
+    }
+    else if(library == LIB_VPADBASE){
+        log_printf("FindExport of %s! From LIB_VPADBASE\n", functionName);
+        if(vpadbase_handle == 0){log_print("LIB_VPADBASE not aquired\n"); return 0;}
+        rpl_handle = vpadbase_handle;
+    }
+
+    if(!rpl_handle){
+        log_printf("Failed to find the RPL handle for %s\n", functionName);
+        return 0;
+    }
+
+    OSDynLoad_FindExport(rpl_handle, 0, functionName, &real_addr);
+
+    if(!real_addr){
+        log_printf("OSDynLoad_FindExport failed for %s\n", functionName);
+        return 0;
+    }
+
+    if((library == LIB_NN_ACP) && (u32)(*(volatile unsigned int*)(real_addr) & 0x48000002) == 0x48000000)
+    {
+        unsigned int address_diff = (u32)(*(volatile unsigned int*)(real_addr) & 0x03FFFFFC);
+        if((address_diff & 0x03000000) == 0x03000000) {
+            address_diff |=  0xFC000000;
+        }
+        real_addr += (int)address_diff;
+        if((u32)(*(volatile unsigned int*)(real_addr) & 0x48000002) == 0x48000000){
+            return 0;
+        }
+    }
+
+    return real_addr;
+}
+
+void PatchSDK(void)
+{
+    if(gPatchSDKDone)
+        return;
+
+    gPatchSDKDone = 1;
+
+    // this only needs
+    gLoaderPhysicalBufferAddr = (u32)OSEffectiveToPhysical((void*)0xF6000000);
+    if(gLoaderPhysicalBufferAddr == 0)
+        gLoaderPhysicalBufferAddr = 0x1B000000; // this is just in case and probably never needed
+
+    u32 sdkLeAddr = 0;
+    u32 sdkGtAddr = 0;
+
+    u32 sdkLePatch = 0;
+    u32 sdkGtPatch = 0;
+
+    /* Patch to bypass SDK version tests */
+    if((OS_FIRMWARE == 532) || (OS_FIRMWARE == 540))
+    {
+        /* Patch to bypass SDK version tests */
+        sdkLeAddr = 0x010095b4;
+        sdkLePatch = 0x480000a0; // ble loc_1009654    (0x408100a0) => b loc_1009654      (0x480000a0)
+
+        sdkGtAddr = 0x01009658;
+        sdkGtPatch = 0x480000e8; // bge loc_1009740    (0x408100a0) => b loc_1009740      (0x480000e8)
+    }
+    else if((OS_FIRMWARE == 500) || (OS_FIRMWARE == 510))
+    {
+        /* Patch to bypass SDK version tests */
+        sdkLeAddr = 0x010091CC;
+        sdkLePatch = 0x480000a0; // ble loc_1009654    (0x408100a0) => b loc_1009654      (0x480000a0)
+
+        sdkGtAddr = 0x01009270;
+        sdkGtPatch = 0x480000e8; // bge loc_1009740    (0x408100a0) => b loc_1009740      (0x480000e8)
+    }
+    else if ((OS_FIRMWARE == 400) || (OS_FIRMWARE == 410))
+    {
+        /* Patch to bypass SDK version tests */
+        sdkLeAddr = 0x01008DAC;
+        sdkLePatch = 0x480000a0; // ble loc_1009654    (0x408100a0) => b loc_1009654      (0x480000a0)
+
+        sdkGtAddr = 0x01008E50;
+        sdkGtPatch = 0x480000e8; // bge loc_1009740    (0x408100a0) => b loc_1009740      (0x480000e8)
+    }
+    else if (OS_FIRMWARE < 400)
+    {
+        /* Patch to bypass SDK version tests */
+        sdkLeAddr = 0x010067A8;
+        sdkLePatch = 0x48000088;
+
+        sdkGtAddr = 0x01006834;
+        sdkGtPatch = 0x480000b8;
+    }
+	else if (OS_FIRMWARE == 550)
+    {
+        /* Patch to bypass SDK version tests */
+        sdkLeAddr = 0x010097AC;
+        sdkLePatch = 0x480000a0; // ble loc_1009654    (0x408100a0) => b loc_1009654      (0x480000a0)
+
+        sdkGtAddr = 0x01009850;
+        sdkGtPatch = 0x480000e8; // bge loc_1009740    (0x408100a0) => b loc_1009740      (0x480000e8)
+    }
+
+    u32 sdkLePhysAddr = (u32)OSEffectiveToPhysical((void*)sdkLeAddr);
+    u32 sdkGtPhysAddr = (u32)OSEffectiveToPhysical((void*)sdkGtAddr);
+
+    if(sdkLePhysAddr != 0 && sdkGtPhysAddr != 0)
+    {
+        DCFlushRange(&sdkLePatch, sizeof(sdkLePatch));
+        DCFlushRange(&sdkGtPatch, sizeof(sdkGtPatch));
+
+        SC0x25_KernelCopyData(sdkLePhysAddr, (u32)OSEffectiveToPhysical(&sdkLePatch), 4);
+        SC0x25_KernelCopyData(sdkGtPhysAddr, (u32)OSEffectiveToPhysical(&sdkGtPatch), 4);
+
+        ICInvalidateRange((void*)(sdkLeAddr), 4);
+        ICInvalidateRange((void*)(sdkGtPhysAddr), 4);
+    }
 }
